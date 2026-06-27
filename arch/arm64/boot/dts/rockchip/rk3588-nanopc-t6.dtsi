@@ -242,6 +242,18 @@
 	status = "okay";
 };
 
+&vepu121_1 {
+	status = "okay";
+};
+
+&vepu121_2 {
+	status = "okay";
+};
+
+&vepu121_3 {
+	status = "okay";
+};
+
 &combphy1_ps {
 	status = "okay";
 };
