@@ -607,7 +607,7 @@ static int jpgdec_probe(struct platform_device *pdev)
 	const struct of_device_id *match = NULL;
 	int ret = 0;
 
-	dev_info(dev, "probe device\n");
+	dev_dbg(dev, "probe device\n");
 	dec = devm_kzalloc(dev, sizeof(struct jpgdec_dev), GFP_KERNEL);
 	if (!dec)
 		return -ENOMEM;

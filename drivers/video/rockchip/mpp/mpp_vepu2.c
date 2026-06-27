@@ -1208,7 +1208,7 @@ static int vepu_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
 
-	dev_info(dev, "probing start\n");
+	dev_dbg(dev, "probing start\n");
 
 	if (strstr(np->name, "ccu"))
 		ret = vepu_ccu_probe(pdev);

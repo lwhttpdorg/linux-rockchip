@@ -412,7 +412,7 @@ static int mpp_service_probe(struct platform_device *pdev)
 	struct device_node *np = dev->of_node;
 
 	dev_info(dev, "%s\n", mpp_version);
-	dev_info(dev, "probe start\n");
+	dev_dbg(dev, "probe start\n");
 	srv = devm_kzalloc(dev, sizeof(*srv), GFP_KERNEL);
 	if (!srv)
 		return -ENOMEM;

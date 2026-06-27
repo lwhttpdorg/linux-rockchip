@@ -1541,7 +1541,7 @@ int rkvdec2_attach_ccu(struct device *dev, struct rkvdec2_dev *dec)
 	ret = of_property_read_u32(dev->of_node, "rockchip,core-mask", &dec->core_mask);
 	if (ret)
 		return ret;
-	dev_info(dev, "core_mask=%08x\n", dec->core_mask);
+	dev_dbg(dev, "core_mask=%08x\n", dec->core_mask);
 
 	/* if not the main-core, then attach the main core domain to current */
 	if (dec->mpp.core_id != 0) {
@@ -1559,7 +1559,7 @@ int rkvdec2_attach_ccu(struct device *dev, struct rkvdec2_dev *dec)
 
 	dec->ccu = ccu;
 
-	dev_info(dev, "attach ccu as core %d\n", dec->mpp.core_id);
+	dev_dbg(dev, "attach ccu as core %d\n", dec->mpp.core_id);
 	mpp_debug_enter();
 
 	return 0;

@@ -738,7 +738,7 @@ static int vdpu_probe(struct platform_device *pdev)
 	struct mpp_dev *mpp = NULL;
 	const struct of_device_id *match = NULL;
 
-	dev_info(dev, "probe device\n");
+	dev_dbg(dev, "probe device\n");
 	dec = devm_kzalloc(dev, sizeof(struct vdpu_dev), GFP_KERNEL);
 	if (!dec)
 		return -ENOMEM;

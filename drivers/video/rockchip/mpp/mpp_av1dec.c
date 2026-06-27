@@ -987,7 +987,7 @@ static int av1dec_probe(struct platform_device *pdev)
 	struct mpp_dev *mpp = NULL;
 	const struct of_device_id *match = NULL;
 
-	dev_info(dev, "probing start\n");
+	dev_dbg(dev, "probing start\n");
 
 	dec = devm_kzalloc(dev, sizeof(*dec), GFP_KERNEL);
 	if (!dec)

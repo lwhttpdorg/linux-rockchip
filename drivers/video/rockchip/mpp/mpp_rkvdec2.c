@@ -1103,7 +1103,7 @@ static int rkvdec2_devfreq_init(struct mpp_dev *mpp)
 
 			return -EPROBE_DEFER;
 		}
-		dev_info(mpp->dev, "no regulator, devfreq is disabled\n");
+		dev_dbg(mpp->dev, "no regulator, devfreq is disabled\n");
 
 		return 0;
 	}
@@ -1769,7 +1769,7 @@ static int rkvdec2_ccu_probe(struct platform_device *pdev)
 	device_init_wakeup(dev, true);
 	pm_runtime_enable(dev);
 
-	dev_info(dev, "ccu-mode: %d\n", ccu->ccu_mode);
+	dev_dbg(dev, "ccu-mode: %d\n", ccu->ccu_mode);
 	return 0;
 }
 
@@ -2056,7 +2056,7 @@ static int rkvdec2_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
 
-	dev_info(dev, "%s, probing start\n", np->name);
+	dev_dbg(dev, "%s, probing start\n", np->name);
 
 	if (strstr(np->name, "ccu"))
 		ret = rkvdec2_ccu_probe(pdev);

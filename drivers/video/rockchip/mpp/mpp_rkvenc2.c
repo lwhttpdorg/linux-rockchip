@@ -2918,7 +2918,7 @@ static int rkvenc_attach_ccu(struct device *dev, struct rkvenc_dev *enc)
 	}
 	enc->ccu = ccu;
 
-	dev_info(dev, "attach ccu as core %d\n", enc->mpp.core_id);
+	dev_dbg(dev, "attach ccu as core %d\n", enc->mpp.core_id);
 	mpp_debug_enter();
 
 	return 0;
@@ -3174,7 +3174,7 @@ static int rkvenc_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
 
-	dev_info(dev, "probing start\n");
+	dev_dbg(dev, "probing start\n");
 
 	if (strstr(np->name, "ccu"))
 		ret = rkvenc_ccu_probe(pdev);
