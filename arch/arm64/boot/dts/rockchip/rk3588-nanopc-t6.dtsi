@@ -43,6 +43,7 @@
 
 	hdmi0-con {
 		compatible = "hdmi-connector";
+		hdmi-pwr-supply = <&vcc5v0_sys>;
 		type = "a";
 
 		port {
@@ -54,6 +55,7 @@
 
 	hdmi1-con {
 		compatible = "hdmi-connector";
+		hdmi-pwr-supply = <&vcc5v0_sys>;
 		type = "a";
 
 		port {
@@ -471,7 +473,22 @@
 };
 
 &i2c6 {
+	clock-frequency = <200000>;
 	status = "okay";
+
+	eeprom@53 {
+		compatible = "microchip,24c02", "atmel,24c02";
+		reg = <0x53>;
+		#address-cells = <2>;
+		#size-cells = <0>;
+		pagesize = <16>;
+		size = <256>;
+		vcc-supply = <&vcc_3v3_s3>;
+
+		eui_48: eui-48@fa {
+			reg = <0xfa 0x06>;
+		};
+	};
 
 	usbc0: usb-typec@22 {
 		compatible = "fcs,fusb302";
@@ -753,6 +770,8 @@
 	max-frequency = <200000000>;
 	mmc-hs400-1_8v;
 	mmc-hs400-enhanced-strobe;
+	vmmc-supply = <&vcc_3v3_s3>;
+	vqmmc-supply = <&vcc_1v8_s3>;
 	status = "okay";
 };
 

@@ -28,10 +28,10 @@
 
 		led-green {
 			color = <LED_COLOR_ID_GREEN>;
-			default-state = "on";
-			function = LED_FUNCTION_HEARTBEAT;
+			default-state = "off";
+			function = LED_FUNCTION_ACTIVITY;
 			gpios = <&gpio0 RK_PA0 GPIO_ACTIVE_HIGH>;
-			linux,default-trigger = "heartbeat";
+			linux,default-trigger = "activity";
 		};
 	};
 
