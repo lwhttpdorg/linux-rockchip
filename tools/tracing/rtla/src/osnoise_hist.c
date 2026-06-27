@@ -9,7 +9,6 @@
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
-#include <errno.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -247,9 +246,7 @@ static void osnoise_hist_header(struct osnoise_tool *tool)
 	if (!params->common.hist.no_index)
 		trace_seq_printf(s, "Index");
 
-	for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-		if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-			continue;
+	for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 		if (!data->hist[cpu].count)
 			continue;
@@ -278,9 +275,7 @@ osnoise_print_summary(struct osnoise_params *params,
 	if (!params->common.hist.no_index)
 		trace_seq_printf(trace->seq, "count:");
 
-	for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-		if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-			continue;
+	for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 		if (!data->hist[cpu].count)
 			continue;
@@ -292,9 +287,7 @@ osnoise_print_summary(struct osnoise_params *params,
 	if (!params->common.hist.no_index)
 		trace_seq_printf(trace->seq, "min:  ");
 
-	for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-		if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-			continue;
+	for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 		if (!data->hist[cpu].count)
 			continue;
@@ -307,9 +300,7 @@ osnoise_print_summary(struct osnoise_params *params,
 	if (!params->common.hist.no_index)
 		trace_seq_printf(trace->seq, "avg:  ");
 
-	for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-		if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-			continue;
+	for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 		if (!data->hist[cpu].count)
 			continue;
@@ -325,9 +316,7 @@ osnoise_print_summary(struct osnoise_params *params,
 	if (!params->common.hist.no_index)
 		trace_seq_printf(trace->seq, "max:  ");
 
-	for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-		if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-			continue;
+	for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 		if (!data->hist[cpu].count)
 			continue;
@@ -362,9 +351,7 @@ osnoise_print_stats(struct osnoise_tool *tool)
 			trace_seq_printf(trace->seq, "%-6d",
 					 bucket * data->bucket_size);
 
-		for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-			if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-				continue;
+		for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 			if (!data->hist[cpu].count)
 				continue;
@@ -400,9 +387,7 @@ osnoise_print_stats(struct osnoise_tool *tool)
 	if (!params->common.hist.no_index)
 		trace_seq_printf(trace->seq, "over: ");
 
-	for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-		if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-			continue;
+	for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 		if (!data->hist[cpu].count)
 			continue;
@@ -421,18 +406,17 @@ osnoise_print_stats(struct osnoise_tool *tool)
 /*
  * osnoise_hist_usage - prints osnoise hist usage message
  */
-static void osnoise_hist_usage(char *usage)
+static void osnoise_hist_usage(void)
 {
-	int i;
-
-	static const char * const msg[] = {
-		"",
-		"  usage: rtla osnoise hist [-h] [-D] [-d s] [-a us] [-p us] [-r us] [-s us] [-S us] \\",
+	static const char * const msg_start[] = {
+		"[-D] [-d s] [-a us] [-p us] [-r us] [-s us] [-S us] \\",
 		"	  [-T us] [-t [file]] [-e sys[:event]] [--filter <filter>] [--trigger <trigger>] \\",
 		"	  [-c cpu-list] [-H cpu-list] [-P priority] [-b N] [-E N] [--no-header] [--no-summary] \\",
 		"	  [--no-index] [--with-zeros] [-C [cgroup_name]] [--warm-up]",
-		"",
-		"	  -h/--help: print this menu",
+		NULL,
+	};
+
+	static const char * const msg_opts[] = {
 		"	  -a/--auto: set automatic trace mode, stopping the session if argument in us sample is hit",
 		"	  -p/--period us: osnoise period in us",
 		"	  -r/--runtime us: osnoise runtime in us",
@@ -467,19 +451,8 @@ static void osnoise_hist_usage(char *usage)
 		NULL,
 	};
 
-	if (usage)
-		fprintf(stderr, "%s\n", usage);
-
-	fprintf(stderr, "rtla osnoise hist: a per-cpu histogram of the OS noise (version %s)\n",
-			VERSION);
-
-	for (i = 0; msg[i]; i++)
-		fprintf(stderr, "%s\n", msg[i]);
-
-	if (usage)
-		exit(EXIT_FAILURE);
-
-	exit(EXIT_SUCCESS);
+	common_usage("osnoise", "hist", "a per-cpu histogram of the OS noise",
+		     msg_start, msg_opts);
 }
 
 /*
@@ -489,7 +462,6 @@ static struct common_params
 *osnoise_hist_parse_args(int argc, char *argv[])
 {
 	struct osnoise_params *params;
-	struct trace_events *tevent;
 	int retval;
 	int c;
 	char *trace_output = NULL;
@@ -508,22 +480,16 @@ static struct common_params
 
 	while (1) {
 		static struct option long_options[] = {
+			COMMON_OPTIONS,
 			{"auto",		required_argument,	0, 'a'},
 			{"bucket-size",		required_argument,	0, 'b'},
 			{"entries",		required_argument,	0, 'E'},
-			{"cpus",		required_argument,	0, 'c'},
-			{"cgroup",		optional_argument,	0, 'C'},
-			{"debug",		no_argument,		0, 'D'},
-			{"duration",		required_argument,	0, 'd'},
-			{"house-keeping",	required_argument,		0, 'H'},
 			{"help",		no_argument,		0, 'h'},
 			{"period",		required_argument,	0, 'p'},
-			{"priority",		required_argument,	0, 'P'},
 			{"runtime",		required_argument,	0, 'r'},
 			{"stop",		required_argument,	0, 's'},
 			{"stop-total",		required_argument,	0, 'S'},
 			{"trace",		optional_argument,	0, 't'},
-			{"event",		required_argument,	0, 'e'},
 			{"threshold",		required_argument,	0, 'T'},
 			{"no-header",		no_argument,		0, '0'},
 			{"no-summary",		no_argument,		0, '1'},
@@ -538,15 +504,14 @@ static struct common_params
 			{0, 0, 0, 0}
 		};
 
-		/* getopt_long stores the option index here. */
-		int option_index = 0;
-
-		c = getopt_long(argc, argv, "a:c:C::b:d:e:E:DhH:p:P:r:s:S:t::T:01234:5:6:7:",
-				 long_options, &option_index);
+		c = getopt_auto(argc, argv, long_options);
 
 		/* detect the end of the options. */
 		if (c == -1)
 			break;
+
+		if (set_common_option(c, argc, argv, &params->common))
+			continue;
 
 		switch (c) {
 		case 'a':
@@ -565,71 +530,27 @@ static struct common_params
 			params->common.hist.bucket_size = get_llong_from_str(optarg);
 			if (params->common.hist.bucket_size == 0 ||
 			    params->common.hist.bucket_size >= 1000000)
-				osnoise_hist_usage("Bucket size needs to be > 0 and <= 1000000\n");
-			break;
-		case 'c':
-			retval = parse_cpu_set(optarg, &params->common.monitored_cpus);
-			if (retval)
-				osnoise_hist_usage("\nInvalid -c cpu list\n");
-			params->common.cpus = optarg;
-			break;
-		case 'C':
-			params->common.cgroup = 1;
-			params->common.cgroup_name = parse_optional_arg(argc, argv);
-			break;
-		case 'D':
-			config_debug = 1;
-			break;
-		case 'd':
-			params->common.duration = parse_seconds_duration(optarg);
-			if (!params->common.duration)
-				osnoise_hist_usage("Invalid -D duration\n");
-			break;
-		case 'e':
-			tevent = trace_event_alloc(optarg);
-			if (!tevent) {
-				err_msg("Error alloc trace event");
-				exit(EXIT_FAILURE);
-			}
-
-			if (params->common.events)
-				tevent->next = params->common.events;
-
-			params->common.events = tevent;
+				fatal("Bucket size needs to be > 0 and <= 1000000");
 			break;
 		case 'E':
 			params->common.hist.entries = get_llong_from_str(optarg);
 			if (params->common.hist.entries < 10 ||
 			    params->common.hist.entries > 9999999)
-				osnoise_hist_usage("Entries must be > 10 and < 9999999\n");
+				fatal("Entries must be > 10 and < 9999999");
 			break;
 		case 'h':
 		case '?':
-			osnoise_hist_usage(NULL);
-			break;
-		case 'H':
-			params->common.hk_cpus = 1;
-			retval = parse_cpu_set(optarg, &params->common.hk_cpu_set);
-			if (retval) {
-				err_msg("Error parsing house keeping CPUs\n");
-				exit(EXIT_FAILURE);
-			}
+			osnoise_hist_usage();
 			break;
 		case 'p':
 			params->period = get_llong_from_str(optarg);
 			if (params->period > 10000000)
-				osnoise_hist_usage("Period longer than 10 s\n");
-			break;
-		case 'P':
-			retval = parse_prio(optarg, &params->common.sched_param);
-			if (retval == -1)
-				osnoise_hist_usage("Invalid -P priority");
-			params->common.set_sched = 1;
+				fatal("Period longer than 10 s");
 			break;
 		case 'r':
 			params->runtime = get_llong_from_str(optarg);
 			if (params->runtime < 100)
-				osnoise_hist_usage("Runtime shorter than 100 us\n");
+				fatal("Runtime shorter than 100 us");
 			break;
 		case 's':
 			params->common.stop_us = get_llong_from_str(optarg);
@@ -660,23 +581,19 @@ static struct common_params
 		case '4': /* trigger */
 			if (params->common.events) {
 				retval = trace_event_add_trigger(params->common.events, optarg);
-				if (retval) {
-					err_msg("Error adding trigger %s\n", optarg);
-					exit(EXIT_FAILURE);
-				}
+				if (retval)
+					fatal("Error adding trigger %s", optarg);
 			} else {
-				osnoise_hist_usage("--trigger requires a previous -e\n");
+				fatal("--trigger requires a previous -e");
 			}
 			break;
 		case '5': /* filter */
 			if (params->common.events) {
 				retval = trace_event_add_filter(params->common.events, optarg);
-				if (retval) {
-					err_msg("Error adding filter %s\n", optarg);
-					exit(EXIT_FAILURE);
-				}
+				if (retval)
+					fatal("Error adding filter %s", optarg);
 			} else {
-				osnoise_hist_usage("--filter requires a previous -e\n");
+				fatal("--filter requires a previous -e");
 			}
 			break;
 		case '6':
@@ -688,34 +605,28 @@ static struct common_params
 		case '8':
 			retval = actions_parse(&params->common.threshold_actions, optarg,
 					       "osnoise_trace.txt");
-			if (retval) {
-				err_msg("Invalid action %s\n", optarg);
-				exit(EXIT_FAILURE);
-			}
+			if (retval)
+				fatal("Invalid action %s", optarg);
 			break;
 		case '9':
 			retval = actions_parse(&params->common.end_actions, optarg,
 					       "osnoise_trace.txt");
-			if (retval) {
-				err_msg("Invalid action %s\n", optarg);
-				exit(EXIT_FAILURE);
-			}
+			if (retval)
+				fatal("Invalid action %s", optarg);
 			break;
 		default:
-			osnoise_hist_usage("Invalid option");
+			fatal("Invalid option");
 		}
 	}
 
 	if (trace_output)
 		actions_add_trace_output(&params->common.threshold_actions, trace_output);
 
-	if (geteuid()) {
-		err_msg("rtla needs root permission\n");
-		exit(EXIT_FAILURE);
-	}
+	if (geteuid())
+		fatal("rtla needs root permission");
 
 	if (params->common.hist.no_index && !params->common.hist.with_zeros)
-		osnoise_hist_usage("no-index set and with-zeros not set - it does not make sense");
+		fatal("no-index set and with-zeros not set - it does not make sense");
 
 	return &params->common;
 }

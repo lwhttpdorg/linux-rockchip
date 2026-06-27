@@ -18,10 +18,16 @@ struct dpll_device;
 struct dpll_pin;
 struct dpll_pin_esync;
 struct fwnode_handle;
+struct ref_tracker;
 
 struct dpll_device_ops {
 	int (*mode_get)(const struct dpll_device *dpll, void *dpll_priv,
 			enum dpll_mode *mode, struct netlink_ext_ack *extack);
+	int (*mode_set)(const struct dpll_device *dpll, void *dpll_priv,
+			enum dpll_mode mode, struct netlink_ext_ack *extack);
+	int (*supported_modes_get)(const struct dpll_device *dpll,
+				   void *dpll_priv, unsigned long *modes,
+				   struct netlink_ext_ack *extack);
 	int (*lock_status_get)(const struct dpll_device *dpll, void *dpll_priv,
 			       enum dpll_lock_status *status,
 			       enum dpll_lock_status_error *status_error,
@@ -168,6 +174,12 @@ struct dpll_pin_properties {
 	u32 phase_gran;
 };
 
+#ifdef CONFIG_DPLL_REFCNT_TRACKER
+typedef struct ref_tracker *dpll_tracker;
+#else
+typedef struct {} dpll_tracker;
+#endif
+
 #define DPLL_DEVICE_CREATED	1
 #define DPLL_DEVICE_DELETED	2
 #define DPLL_DEVICE_CHANGED	3
@@ -200,7 +212,8 @@ size_t dpll_netdev_pin_handle_size(const struct net_device *dev);
 int dpll_netdev_add_pin_handle(struct sk_buff *msg,
 			       const struct net_device *dev);
 
-struct dpll_pin *fwnode_dpll_pin_find(struct fwnode_handle *fwnode);
+struct dpll_pin *fwnode_dpll_pin_find(struct fwnode_handle *fwnode,
+				      dpll_tracker *tracker);
 #else
 static inline void
 dpll_netdev_pin_set(struct net_device *dev, struct dpll_pin *dpll_pin) { }
@@ -218,16 +231,17 @@ dpll_netdev_add_pin_handle(struct sk_buff *msg, const struct net_device *dev)
 }
 
 static inline struct dpll_pin *
-fwnode_dpll_pin_find(struct fwnode_handle *fwnode)
+fwnode_dpll_pin_find(struct fwnode_handle *fwnode, dpll_tracker *tracker)
 {
 	return NULL;
 }
 #endif
 
 struct dpll_device *
-dpll_device_get(u64 clock_id, u32 dev_driver_id, struct module *module);
+dpll_device_get(u64 clock_id, u32 dev_driver_id, struct module *module,
+		dpll_tracker *tracker);
 
-void dpll_device_put(struct dpll_device *dpll);
+void dpll_device_put(struct dpll_device *dpll, dpll_tracker *tracker);
 
 int dpll_device_register(struct dpll_device *dpll, enum dpll_type type,
 			 const struct dpll_device_ops *ops, void *priv);
@@ -235,9 +249,11 @@ int dpll_device_register(struct dpll_device *dpll, enum dpll_type type,
 void dpll_device_unregister(struct dpll_device *dpll,
 			    const struct dpll_device_ops *ops, void *priv);
 
+#define DPLL_PIN_IDX_UNSPEC	U32_MAX
+
 struct dpll_pin *
 dpll_pin_get(u64 clock_id, u32 dev_driver_id, struct module *module,
-	     const struct dpll_pin_properties *prop);
+	     const struct dpll_pin_properties *prop, dpll_tracker *tracker);
 
 int dpll_pin_register(struct dpll_device *dpll, struct dpll_pin *pin,
 		      const struct dpll_pin_ops *ops, void *priv);
@@ -245,7 +261,7 @@ int dpll_pin_register(struct dpll_device *dpll, struct dpll_pin *pin,
 void dpll_pin_unregister(struct dpll_device *dpll, struct dpll_pin *pin,
 			 const struct dpll_pin_ops *ops, void *priv);
 
-void dpll_pin_put(struct dpll_pin *pin);
+void dpll_pin_put(struct dpll_pin *pin, dpll_tracker *tracker);
 
 void dpll_pin_fwnode_set(struct dpll_pin *pin, struct fwnode_handle *fwnode);
 
@@ -258,6 +274,7 @@ void dpll_pin_on_pin_unregister(struct dpll_pin *parent, struct dpll_pin *pin,
 int dpll_pin_ref_sync_pair_add(struct dpll_pin *pin,
 			       struct dpll_pin *ref_sync_pin);
 
+int __dpll_device_change_ntf(struct dpll_device *dpll);
 int dpll_device_change_ntf(struct dpll_device *dpll);
 
 int __dpll_pin_change_ntf(struct dpll_pin *pin);

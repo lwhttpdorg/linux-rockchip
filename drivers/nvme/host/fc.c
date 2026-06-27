@@ -520,6 +520,8 @@ nvme_fc_free_rport(struct kref *ref)
 
 	WARN_ON(rport->remoteport.port_state != FC_OBJSTATE_DELETED);
 	WARN_ON(!list_empty(&rport->ctrl_list));
+	WARN_ON(!list_empty(&rport->ls_req_list));
+	WARN_ON(!list_empty(&rport->ls_rcv_list));
 
 	/* remove from lport list */
 	spin_lock_irqsave(&nvme_fc_lock, flags);
@@ -1722,15 +1724,15 @@ nvme_fc_rcv_ls_req(struct nvme_fc_remote_port *portptr,
 		goto out_put;
 	}
 
-	lsop = kzalloc(sizeof(*lsop), GFP_KERNEL);
+	lsop = kzalloc_obj(*lsop);
 	if (!lsop) {
 		nvme_fc_rcv_ls_req_err_msg(lport, w0);
 		ret = -ENOMEM;
 		goto out_put;
 	}
 
-	lsop->rqstbuf = kzalloc(sizeof(*lsop->rqstbuf), GFP_KERNEL);
-	lsop->rspbuf = kzalloc(sizeof(*lsop->rspbuf), GFP_KERNEL);
+	lsop->rqstbuf = kzalloc_obj(*lsop->rqstbuf);
+	lsop->rspbuf = kzalloc_obj(*lsop->rspbuf);
 	if (!lsop->rqstbuf || !lsop->rspbuf) {
 		nvme_fc_rcv_ls_req_err_msg(lport, w0);
 		ret = -ENOMEM;
@@ -3363,6 +3365,7 @@ static const struct nvme_ctrl_ops nvme_fc_ctrl_ops = {
 	.submit_async_event	= nvme_fc_submit_async_event,
 	.delete_ctrl		= nvme_fc_delete_ctrl,
 	.get_address		= nvmf_get_address,
+	.get_virt_boundary	= nvmf_get_virt_boundary,
 };
 
 static void
@@ -3440,7 +3443,7 @@ nvme_fc_alloc_ctrl(struct device *dev, struct nvmf_ctrl_options *opts,
 		goto out_fail;
 	}
 
-	ctrl = kzalloc(sizeof(*ctrl), GFP_KERNEL);
+	ctrl = kzalloc_obj(*ctrl);
 	if (!ctrl) {
 		ret = -ENOMEM;
 		goto out_fail;
@@ -3494,8 +3497,8 @@ nvme_fc_alloc_ctrl(struct device *dev, struct nvmf_ctrl_options *opts,
 	ctrl->ctrl.cntlid = 0xffff;
 
 	ret = -ENOMEM;
-	ctrl->queues = kcalloc(ctrl->ctrl.queue_count,
-				sizeof(struct nvme_fc_queue), GFP_KERNEL);
+	ctrl->queues = kzalloc_objs(struct nvme_fc_queue,
+				    ctrl->ctrl.queue_count);
 	if (!ctrl->queues)
 		goto out_free_ida;
 

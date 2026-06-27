@@ -334,11 +334,7 @@ int snd_parse_eld(struct device *dev, struct snd_parsed_hdmi_eld *e,
 	e->eld_ver = GRAB_BITS(buf, 0, 3, 5);
 	if (e->eld_ver != ELD_VER_CEA_861D &&
 	    e->eld_ver != ELD_VER_PARTIAL) {
-		/* Version 0 is common during boot when display is not ready yet */
-		if (e->eld_ver == 0)
-			dev_dbg(dev, "HDMI: ELD not ready (version 0)\n");
-		else
-			dev_info(dev, "HDMI: Unknown ELD version %d\n", e->eld_ver);
+		dev_info(dev, "HDMI: Unknown ELD version %d\n", e->eld_ver);
 		goto out_fail;
 	}
 
@@ -383,7 +379,7 @@ int snd_parse_eld(struct device *dev, struct snd_parsed_hdmi_eld *e,
 	 * in console or for audio devices. Assume the highest speakers
 	 * configuration, to _not_ prohibit multi-channel audio playback.
 	 */
-	if (!e->spk_alloc)
+	if (!e->spk_alloc && e->sad_count)
 		e->spk_alloc = 0xffff;
 
 	return 0;

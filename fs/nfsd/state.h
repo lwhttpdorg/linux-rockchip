@@ -549,10 +549,10 @@ struct nfs4_client_reclaim {
  *   ~32(deleg. ace) = 112 bytes
  *
  * Some responses can exceed this. A LOCK denial includes the conflicting
- * lock owner, which can be up to 1024 bytes (NFS4_OPAQUE_LIMIT). Responses
- * larger than REPLAY_ISIZE are not cached in rp_ibuf; only rp_status is
- * saved. Enlarging this constant increases the size of every
- * nfs4_stateowner.
+ * lock owner, which can be up to 1024 bytes (NFS4_OPAQUE_LIMIT). When a
+ * response exceeds REPLAY_ISIZE, a buffer is dynamically allocated. If
+ * that allocation fails, only rp_status is saved. Enlarging this constant
+ * increases the size of every nfs4_stateowner.
  */
 
 #define NFSD4_REPLAY_ISIZE       112 
@@ -564,11 +564,13 @@ struct nfs4_client_reclaim {
 struct nfs4_replay {
 	__be32			rp_status;
 	unsigned int		rp_buflen;
-	char			*rp_buf;
+	char			*rp_buf; /* rp_ibuf or kmalloc'd */
 	struct knfsd_fh		rp_openfh;
 	int			rp_locked;
 	char			rp_ibuf[NFSD4_REPLAY_ISIZE];
 };
+
+extern void nfs4_replay_free_cache(struct nfs4_replay *rp);
 
 struct nfs4_stateowner;
 
@@ -829,8 +831,10 @@ static inline void nfsd4_try_run_cb(struct nfsd4_callback *cb)
 
 extern void nfsd4_shutdown_callback(struct nfs4_client *);
 extern void nfsd4_shutdown_copy(struct nfs4_client *clp);
+void nfsd4_put_client(struct nfs4_client *clp);
 void nfsd4_async_copy_reaper(struct nfsd_net *nn);
 bool nfsd4_has_active_async_copies(struct nfs4_client *clp);
+void nfsd_update_cmtime_attr(struct file *f, unsigned int flags);
 extern struct nfs4_client_reclaim *nfs4_client_to_reclaim(struct xdr_netobj name,
 				struct xdr_netobj princhash, struct nfsd_net *nn);
 extern bool nfs4_has_reclaimed_state(struct xdr_netobj name, struct nfsd_net *nn);
@@ -849,8 +853,12 @@ struct nfsd_file *find_any_file(struct nfs4_file *f);
 
 #ifdef CONFIG_NFSD_V4
 void nfsd4_revoke_states(struct nfsd_net *nn, struct super_block *sb);
+void nfsd4_cancel_copy_by_sb(struct net *net, struct super_block *sb);
 #else
 static inline void nfsd4_revoke_states(struct nfsd_net *nn, struct super_block *sb)
+{
+}
+static inline void nfsd4_cancel_copy_by_sb(struct net *net, struct super_block *sb)
 {
 }
 #endif
@@ -874,4 +882,9 @@ static inline bool try_to_expire_client(struct nfs4_client *clp)
 
 extern __be32 nfsd4_deleg_getattr_conflict(struct svc_rqst *rqstp,
 		struct dentry *dentry, struct nfs4_delegation **pdp);
+
+struct nfsd4_get_dir_delegation;
+struct nfs4_delegation *nfsd_get_dir_deleg(struct nfsd4_compound_state *cstate,
+						struct nfsd4_get_dir_delegation *gdd,
+						struct nfsd_file *nf);
 #endif   /* NFSD4_STATE_H */

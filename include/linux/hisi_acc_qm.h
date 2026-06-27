@@ -99,6 +99,9 @@
 
 #define QM_DEV_ALG_MAX_LEN		256
 
+#define QM_MIG_REGION_SEL		0x100198
+#define QM_MIG_REGION_EN		BIT(0)
+
 /* uacce mode of the driver */
 #define UACCE_MODE_NOUACCE		0 /* don't use uacce */
 #define UACCE_MODE_SVA			1 /* use uacce sva mode */
@@ -472,6 +475,7 @@ struct hisi_qp {
 	u16 pasid;
 	struct uacce_queue *uacce_q;
 
+	u32 ref_count;
 	spinlock_t qp_lock;
 	struct instance_backlog backlog;
 	const void **msg;
@@ -567,6 +571,7 @@ void hisi_qm_reset_done(struct pci_dev *pdev);
 int hisi_qm_wait_mb_ready(struct hisi_qm *qm);
 int hisi_qm_mb(struct hisi_qm *qm, u8 cmd, dma_addr_t dma_addr, u16 queue,
 	       bool op);
+int hisi_qm_mb_read(struct hisi_qm *qm, u64 *base, u8 cmd, u16 queue);
 
 struct hisi_acc_sgl_pool;
 struct hisi_acc_hw_sgl *hisi_acc_sg_buf_map_to_hw_sgl(struct device *dev,

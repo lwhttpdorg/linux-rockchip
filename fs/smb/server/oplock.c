@@ -34,7 +34,7 @@ static struct oplock_info *alloc_opinfo(struct ksmbd_work *work,
 	struct ksmbd_session *sess = work->sess;
 	struct oplock_info *opinfo;
 
-	opinfo = kzalloc(sizeof(struct oplock_info), KSMBD_DEFAULT_GFP);
+	opinfo = kzalloc_obj(struct oplock_info, KSMBD_DEFAULT_GFP);
 	if (!opinfo)
 		return NULL;
 
@@ -86,7 +86,7 @@ static struct lease_table *alloc_lease_table(struct oplock_info *opinfo)
 {
 	struct lease_table *lb;
 
-	lb = kmalloc(sizeof(struct lease_table), KSMBD_DEFAULT_GFP);
+	lb = kmalloc_obj(struct lease_table, KSMBD_DEFAULT_GFP);
 	if (!lb)
 		return NULL;
 
@@ -101,7 +101,7 @@ static int alloc_lease(struct oplock_info *opinfo, struct lease_ctx_info *lctx)
 {
 	struct lease *lease;
 
-	lease = kmalloc(sizeof(struct lease), KSMBD_DEFAULT_GFP);
+	lease = kmalloc_obj(struct lease, KSMBD_DEFAULT_GFP);
 	if (!lease)
 		return -ENOMEM;
 
@@ -661,7 +661,7 @@ static void __smb2_oplock_break_noti(struct work_struct *wk)
 		goto out;
 	}
 
-	rsp_hdr = smb2_get_msg(work->response_buf);
+	rsp_hdr = smb_get_msg(work->response_buf);
 	memset(rsp_hdr, 0, sizeof(struct smb2_hdr) + 2);
 	rsp_hdr->ProtocolId = SMB2_PROTO_NUMBER;
 	rsp_hdr->StructureSize = SMB2_HEADER_STRUCTURE_SIZE;
@@ -675,7 +675,7 @@ static void __smb2_oplock_break_noti(struct work_struct *wk)
 	rsp_hdr->SessionId = 0;
 	memset(rsp_hdr->Signature, 0, 16);
 
-	rsp = smb2_get_msg(work->response_buf);
+	rsp = smb_get_msg(work->response_buf);
 
 	rsp->StructureSize = cpu_to_le16(24);
 	if (!br_info->open_trunc &&
@@ -727,7 +727,7 @@ static int smb2_oplock_break_noti(struct oplock_info *opinfo)
 	if (!work)
 		return -ENOMEM;
 
-	br_info = kmalloc(sizeof(struct oplock_break_info), KSMBD_DEFAULT_GFP);
+	br_info = kmalloc_obj(struct oplock_break_info, KSMBD_DEFAULT_GFP);
 	if (!br_info) {
 		ksmbd_free_work_struct(work);
 		return -ENOMEM;
@@ -773,7 +773,7 @@ static void __smb2_lease_break_noti(struct work_struct *wk)
 		goto out;
 	}
 
-	rsp_hdr = smb2_get_msg(work->response_buf);
+	rsp_hdr = smb_get_msg(work->response_buf);
 	memset(rsp_hdr, 0, sizeof(struct smb2_hdr) + 2);
 	rsp_hdr->ProtocolId = SMB2_PROTO_NUMBER;
 	rsp_hdr->StructureSize = SMB2_HEADER_STRUCTURE_SIZE;
@@ -787,7 +787,7 @@ static void __smb2_lease_break_noti(struct work_struct *wk)
 	rsp_hdr->SessionId = 0;
 	memset(rsp_hdr->Signature, 0, 16);
 
-	rsp = smb2_get_msg(work->response_buf);
+	rsp = smb_get_msg(work->response_buf);
 	rsp->StructureSize = cpu_to_le16(44);
 	rsp->Epoch = br_info->epoch;
 	rsp->Flags = 0;
@@ -836,7 +836,7 @@ static int smb2_lease_break_noti(struct oplock_info *opinfo)
 	if (!work)
 		return -ENOMEM;
 
-	br_info = kmalloc(sizeof(struct lease_break_info), KSMBD_DEFAULT_GFP);
+	br_info = kmalloc_obj(struct lease_break_info, KSMBD_DEFAULT_GFP);
 	if (!br_info) {
 		ksmbd_free_work_struct(work);
 		return -ENOMEM;
@@ -1537,7 +1537,7 @@ struct lease_ctx_info *parse_lease_state(void *open_req)
 	if (IS_ERR_OR_NULL(cc))
 		return NULL;
 
-	lreq = kzalloc(sizeof(struct lease_ctx_info), KSMBD_DEFAULT_GFP);
+	lreq = kzalloc_obj(struct lease_ctx_info, KSMBD_DEFAULT_GFP);
 	if (!lreq)
 		return NULL;
 
@@ -1663,9 +1663,9 @@ void create_durable_rsp_buf(char *cc)
  */
 void create_durable_v2_rsp_buf(char *cc, struct ksmbd_file *fp)
 {
-	struct create_durable_v2_rsp *buf;
+	struct create_durable_rsp_v2 *buf;
 
-	buf = (struct create_durable_v2_rsp *)cc;
+	buf = (struct create_durable_rsp_v2 *)cc;
 	memset(buf, 0, sizeof(struct create_durable_rsp));
 	buf->ccontext.DataOffset = cpu_to_le16(offsetof
 			(struct create_durable_rsp, Data));
@@ -1679,9 +1679,9 @@ void create_durable_v2_rsp_buf(char *cc, struct ksmbd_file *fp)
 	buf->Name[2] = '2';
 	buf->Name[3] = 'Q';
 
-	buf->Timeout = cpu_to_le32(fp->durable_timeout);
+	buf->dcontext.Timeout = cpu_to_le32(fp->durable_timeout);
 	if (fp->is_persistent)
-		buf->Flags = cpu_to_le32(SMB2_DHANDLE_FLAG_PERSISTENT);
+		buf->dcontext.Flags = cpu_to_le32(SMB2_DHANDLE_FLAG_PERSISTENT);
 }
 
 /**

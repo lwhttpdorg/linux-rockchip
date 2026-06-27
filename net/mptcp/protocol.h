@@ -124,7 +124,6 @@
 #define MPTCP_FLUSH_JOIN_LIST	5
 #define MPTCP_SYNC_STATE	6
 #define MPTCP_SYNC_SNDBUF	7
-#define MPTCP_DEQUEUE		8
 
 struct mptcp_skb_cb {
 	u64 map_seq;
@@ -247,14 +246,14 @@ struct mptcp_pm_data {
 
 struct mptcp_pm_local {
 	struct mptcp_addr_info	addr;
-	u8			flags;
+	u32			flags;
 	int			ifindex;
 };
 
 struct mptcp_pm_addr_entry {
 	struct list_head	list;
 	struct mptcp_addr_info	addr;
-	u8			flags;
+	u32			flags;
 	int			ifindex;
 	struct socket		*lsk;
 };
@@ -268,6 +267,13 @@ struct mptcp_data_frag {
 	u16 already_sent;
 	struct page *page;
 };
+
+/* Arbitrary compromise between as low as possible to react timely to subflow
+ * close event and as big as possible to avoid being fouled by biased large
+ * samples due to peer sending data on a different subflow WRT to the incoming
+ * ack.
+ */
+#define MPTCP_RTT_SAMPLES	5
 
 /* MPTCP connection sock */
 struct mptcp_sock {
@@ -341,11 +347,17 @@ struct mptcp_sock {
 				 */
 	struct mptcp_pm_data	pm;
 	struct mptcp_sched_ops	*sched;
+
+	/* Most recent rtt_us observed by in use incoming subflows. */
+	struct {
+		u32	samples[MPTCP_RTT_SAMPLES];
+		u32	next_sample;
+	} rcv_rtt_est;
+
 	struct {
 		int	space;	/* bytes copied in last measurement window */
 		int	copied; /* bytes copied in this measurement window */
 		u64	time;	/* start time of measurement window */
-		u64	rtt_us; /* last maximum rtt of subflows */
 	} rcvq_space;
 	u8		scaling_ratio;
 	bool		allow_subflows;
@@ -358,6 +370,10 @@ struct mptcp_sock {
 					 * allow_infinite_fallback and
 					 * allow_join
 					 */
+
+	struct list_head backlog_list;	/* protected by the data lock */
+	u32		backlog_len;
+	u32		backlog_unaccounted;
 };
 
 #define mptcp_data_lock(sk) spin_lock_bh(&(sk)->sk_lock.slock)
@@ -408,6 +424,7 @@ static inline int mptcp_space_from_win(const struct sock *sk, int win)
 static inline int __mptcp_space(const struct sock *sk)
 {
 	return mptcp_win_from_space(sk, READ_ONCE(sk->sk_rcvbuf) -
+				    READ_ONCE(mptcp_sk(sk)->backlog_len) -
 				    sk_rmem_alloc_get(sk));
 }
 
@@ -416,6 +433,27 @@ static inline struct mptcp_data_frag *mptcp_send_head(const struct sock *sk)
 	const struct mptcp_sock *msk = mptcp_sk(sk);
 
 	return msk->first_pending;
+}
+
+static inline void mptcp_init_rtt_est(struct mptcp_sock *msk)
+{
+	int i;
+
+	for (i = 0; i < MPTCP_RTT_SAMPLES; ++i)
+		msk->rcv_rtt_est.samples[i] = U32_MAX;
+	msk->rcv_rtt_est.next_sample = 0;
+	msk->scaling_ratio = TCP_DEFAULT_SCALING_RATIO;
+}
+
+static inline u32 mptcp_rtt_us_est(const struct mptcp_sock *msk)
+{
+	u32 rtt_us = READ_ONCE(msk->rcv_rtt_est.samples[0]);
+	int i;
+
+	/* Lockless access of collected samples. */
+	for (i = 1; i < MPTCP_RTT_SAMPLES; ++i)
+		rtt_us = min(rtt_us, READ_ONCE(msk->rcv_rtt_est.samples[i]));
+	return rtt_us;
 }
 
 static inline struct mptcp_data_frag *mptcp_send_next(struct sock *sk)
@@ -519,6 +557,7 @@ struct mptcp_subflow_context {
 	u32	map_data_len;
 	__wsum	map_data_csum;
 	u32	map_csum_len;
+	u32	prev_rtt_seq;
 	u32	request_mptcp : 1,  /* send MP_CAPABLE */
 		request_join : 1,   /* send MP_JOIN */
 		request_bkup : 1,
@@ -656,23 +695,32 @@ static inline void mptcp_borrow_fwdmem(struct sock *sk, struct sk_buff *skb)
 {
 	struct sock *ssk = skb->sk;
 
-	/* The subflow just lend the skb fwd memory, and we know that the skb
-	 * is only accounted on the incoming subflow rcvbuf.
+	/* The subflow just lend the skb fwd memory; if the subflow meanwhile
+	 * closed, mptcp_close_ssk() already released the ssk rcv memory.
 	 */
 	DEBUG_NET_WARN_ON_ONCE(skb->destructor);
-	skb->sk = NULL;
 	sk_forward_alloc_add(sk, skb->truesize);
+	if (!ssk)
+		return;
+
 	atomic_sub(skb->truesize, &ssk->sk_rmem_alloc);
+	skb->sk = NULL;
+}
+
+static inline void
+__mptcp_subflow_lend_fwdmem(struct mptcp_subflow_context *subflow, int size)
+{
+	int frag = (subflow->lent_mem_frag + size) & (PAGE_SIZE - 1);
+
+	subflow->lent_mem_frag = frag;
 }
 
 static inline void
 mptcp_subflow_lend_fwdmem(struct mptcp_subflow_context *subflow,
 			  struct sk_buff *skb)
 {
-	int frag = (subflow->lent_mem_frag + skb->truesize) & (PAGE_SIZE - 1);
-
+	__mptcp_subflow_lend_fwdmem(subflow, skb->truesize);
 	skb->destructor = NULL;
-	subflow->lent_mem_frag = frag;
 }
 
 static inline u64
@@ -736,6 +784,9 @@ mptcp_subflow_delegated_next(struct mptcp_delegated_action *delegated)
 	local_unlock_nested_bh(&mptcp_delegated_actions.bh_lock);
 	return ret;
 }
+
+void __mptcp_inherit_memcg(struct sock *sk, struct sock *ssk, gfp_t gfp);
+void __mptcp_inherit_cgrp_data(struct sock *sk, struct sock *ssk);
 
 int mptcp_is_enabled(const struct net *net);
 unsigned int mptcp_get_add_addr_timeout(const struct net *net);
@@ -878,7 +929,7 @@ static inline void mptcp_stop_tout_timer(struct sock *sk)
 	if (!inet_csk(sk)->icsk_mtup.probe_timestamp)
 		return;
 
-	sk_stop_timer(sk, &sk->sk_timer);
+	sk_stop_timer(sk, &inet_csk(sk)->mptcp_tout_timer);
 	inet_csk(sk)->icsk_mtup.probe_timestamp = 0;
 }
 
@@ -905,7 +956,6 @@ static inline u64 mptcp_stamp(void)
 	return div_u64(tcp_clock_ns(), NSEC_PER_USEC);
 }
 
-void mptcp_rcv_space_init(struct mptcp_sock *msk, const struct sock *ssk);
 void mptcp_data_ready(struct sock *sk, struct sock *ssk);
 bool mptcp_finish_join(struct sock *sk);
 bool mptcp_schedule_work(struct sock *sk);
@@ -961,7 +1011,7 @@ static inline void mptcp_write_space(struct sock *sk)
 	/* pairs with memory barrier in mptcp_poll */
 	smp_mb();
 	if (mptcp_stream_memory_free(sk, 1))
-		sk_stream_write_space(sk);
+		INDIRECT_CALL_1(sk->sk_write_space, sk_stream_write_space, sk);
 }
 
 static inline void __mptcp_sync_sndbuf(struct sock *sk)
@@ -1012,8 +1062,6 @@ static inline void mptcp_propagate_sndbuf(struct sock *sk, struct sock *ssk)
 	mptcp_subflow_delegate(subflow, MPTCP_DELEGATE_SNDBUF);
 	local_bh_enable();
 }
-
-void mptcp_destroy_common(struct mptcp_sock *msk);
 
 #define MPTCP_TOKEN_MAX_RETRIES	4
 
@@ -1219,6 +1267,7 @@ void __mptcp_pm_kernel_worker(struct mptcp_sock *msk);
 u8 mptcp_pm_get_endp_signal_max(const struct mptcp_sock *msk);
 u8 mptcp_pm_get_endp_subflow_max(const struct mptcp_sock *msk);
 u8 mptcp_pm_get_endp_laminar_max(const struct mptcp_sock *msk);
+u8 mptcp_pm_get_endp_fullmesh_max(const struct mptcp_sock *msk);
 u8 mptcp_pm_get_limit_add_addr_accepted(const struct mptcp_sock *msk);
 u8 mptcp_pm_get_limit_extra_subflows(const struct mptcp_sock *msk);
 

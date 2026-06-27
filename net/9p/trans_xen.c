@@ -15,6 +15,7 @@
 
 #include <linux/module.h>
 #include <linux/spinlock.h>
+#include <linux/fs_context.h>
 #include <net/9p/9p.h>
 #include <net/9p/client.h>
 #include <net/9p/transport.h>
@@ -66,8 +67,9 @@ static int p9_xen_cancel(struct p9_client *client, struct p9_req_t *req)
 	return 1;
 }
 
-static int p9_xen_create(struct p9_client *client, const char *addr, char *args)
+static int p9_xen_create(struct p9_client *client, struct fs_context *fc)
 {
+	const char *addr = fc->source;
 	struct xen_9pfs_front_priv *priv;
 
 	if (addr == NULL)
@@ -134,8 +136,8 @@ static int p9_xen_request(struct p9_client *client, struct p9_req_t *p9_req)
 	ring = &priv->rings[num];
 
 again:
-	while (wait_event_killable(ring->wq,
-				   p9_xen_write_todo(ring, size)) != 0)
+	while (io_wait_event_killable(ring->wq,
+				      p9_xen_write_todo(ring, size)) != 0)
 		;
 
 	spin_lock_irqsave(&ring->lock, flags);
@@ -257,7 +259,8 @@ static struct p9_trans_module p9_xen_trans = {
 	.name = "xen",
 	.maxsize = 1 << (XEN_9PFS_RING_ORDER + XEN_PAGE_SHIFT - 2),
 	.pooled_rbuffers = false,
-	.def = 1,
+	.def = true,
+	.supports_vmalloc = false,
 	.create = p9_xen_create,
 	.close = p9_xen_close,
 	.request = p9_xen_request,
@@ -414,12 +417,11 @@ static int xen_9pfs_front_init(struct xenbus_device *dev)
 	if (p9_xen_trans.maxsize > XEN_FLEX_RING_SIZE(max_ring_order))
 		p9_xen_trans.maxsize = XEN_FLEX_RING_SIZE(max_ring_order) / 2;
 
-	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+	priv = kzalloc_obj(*priv);
 	if (!priv)
 		return -ENOMEM;
 	priv->dev = dev;
-	priv->rings = kcalloc(XEN_9PFS_NUM_RINGS, sizeof(*priv->rings),
-			      GFP_KERNEL);
+	priv->rings = kzalloc_objs(*priv->rings, XEN_9PFS_NUM_RINGS);
 	if (!priv->rings) {
 		kfree(priv);
 		return -ENOMEM;

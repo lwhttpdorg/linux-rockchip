@@ -758,6 +758,9 @@ static void scsi_handle_queue_ramp_up(struct scsi_device *sdev)
 	const struct scsi_host_template *sht = sdev->host->hostt;
 	struct scsi_device *tmp_sdev;
 
+	if (!sdev->budget_map.map)
+		return;
+
 	if (!sht->track_queue_depth ||
 	    sdev->queue_depth >= sdev->max_queue_depth)
 		return;
@@ -2115,7 +2118,8 @@ maybe_retry:
 }
 
 static enum rq_end_io_ret eh_lock_door_done(struct request *req,
-					    blk_status_t status)
+					    blk_status_t status,
+					    const struct io_comp_batch *iob)
 {
 	blk_mq_free_request(req);
 	return RQ_END_IO_NONE;

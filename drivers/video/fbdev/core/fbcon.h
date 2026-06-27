@@ -50,7 +50,7 @@ struct fbcon_display {
     const struct fb_videomode *mode;
 };
 
-struct fbcon_par {
+struct fbcon_bitops {
 	void (*bmove)(struct vc_data *vc, struct fb_info *info, int sy,
 		      int sx, int dy, int dx, int height, int width);
 	void (*clear)(struct vc_data *vc, struct fb_info *info, int sy,
@@ -64,6 +64,9 @@ struct fbcon_par {
 		       bool enable, int fg, int bg);
 	int  (*update_start)(struct fb_info *info);
 	int  (*rotate_font)(struct fb_info *info, struct vc_data *vc);
+};
+
+struct fbcon_par {
 	struct fb_var_screeninfo var;  /* copy of the current fb_var_screeninfo */
 	struct delayed_work cursor_work; /* Cursor timer */
 	struct fb_cursor cursor_state;
@@ -75,7 +78,6 @@ struct fbcon_par {
 	int    cursor_reset;
 	int    blank_state;
 	int    graphics;
-	int    save_graphics; /* for debug enter/leave */
 	bool   initialized;
 	int    rotate;
 	int    cur_rotate;
@@ -85,7 +87,10 @@ struct fbcon_par {
 	u8    *cursor_src;
 	u32    cursor_size;
 	u32    fd_size;
+
+	const struct fbcon_bitops *bitops;
 };
+
     /*
      *  Attribute Decoding
      */
@@ -105,7 +110,6 @@ struct fbcon_par {
 	((s) & 0x400)
 #define attr_blink(s) \
 	((s) & 0x8000)
-	
 
 static inline int mono_col(const struct fb_info *info)
 {
@@ -185,7 +189,7 @@ static inline u_short fb_scrollmode(struct fbcon_display *fb)
 #ifdef CONFIG_FB_TILEBLITTING
 extern void fbcon_set_tileops(struct vc_data *vc, struct fb_info *info);
 #endif
-extern void fbcon_set_bitops(struct fbcon_par *par);
+extern void fbcon_set_bitops_ur(struct fbcon_par *par);
 extern int  soft_cursor(struct fb_info *info, struct fb_cursor *cursor);
 
 #define FBCON_ATTRIBUTE_UNDERLINE 1
@@ -222,11 +226,5 @@ static inline int get_attribute(struct fb_info *info, u16 c)
         typeof(v) _v = (v);  \
         (void) (&_r == &_v); \
         (i == FB_ROTATE_UR || i == FB_ROTATE_UD) ? _r : _v; })
-
-#ifdef CONFIG_FRAMEBUFFER_CONSOLE_ROTATION
-extern void fbcon_set_rotate(struct fbcon_par *par);
-#else
-#define fbcon_set_rotate(x) do {} while(0)
-#endif /* CONFIG_FRAMEBUFFER_CONSOLE_ROTATION */
 
 #endif /* _VIDEO_FBCON_H */

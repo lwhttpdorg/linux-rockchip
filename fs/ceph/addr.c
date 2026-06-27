@@ -470,7 +470,7 @@ static int ceph_init_request(struct netfs_io_request *rreq, struct file *file)
 	if (rreq->origin != NETFS_READAHEAD)
 		return 0;
 
-	priv = kzalloc(sizeof(*priv), GFP_NOFS);
+	priv = kzalloc_obj(*priv, GFP_NOFS);
 	if (!priv)
 		return -ENOMEM;
 
@@ -1046,11 +1046,7 @@ void ceph_init_writeback_ctl(struct address_space *mapping,
 	ceph_wbc->index = ceph_wbc->start_index;
 	ceph_wbc->end = -1;
 
-	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages) {
-		ceph_wbc->tag = PAGECACHE_TAG_TOWRITE;
-	} else {
-		ceph_wbc->tag = PAGECACHE_TAG_DIRTY;
-	}
+	ceph_wbc->tag = wbc_to_tag(wbc);
 
 	ceph_wbc->op_idx = -1;
 	ceph_wbc->num_ops = 0;
@@ -1190,9 +1186,7 @@ static inline
 void __ceph_allocate_page_array(struct ceph_writeback_ctl *ceph_wbc,
 				unsigned int max_pages)
 {
-	ceph_wbc->pages = kmalloc_array(max_pages,
-					sizeof(*ceph_wbc->pages),
-					GFP_NOFS);
+	ceph_wbc->pages = kmalloc_objs(*ceph_wbc->pages, max_pages, GFP_NOFS);
 	if (!ceph_wbc->pages) {
 		ceph_wbc->from_pool = true;
 		ceph_wbc->pages = mempool_alloc(ceph_wb_pagevec_pool, GFP_NOFS);
@@ -1288,16 +1282,16 @@ static inline int move_dirty_folio_in_page_array(struct address_space *mapping,
 }
 
 static
-int ceph_process_folio_batch(struct address_space *mapping,
-			     struct writeback_control *wbc,
-			     struct ceph_writeback_ctl *ceph_wbc)
+void ceph_process_folio_batch(struct address_space *mapping,
+			      struct writeback_control *wbc,
+			      struct ceph_writeback_ctl *ceph_wbc)
 {
 	struct inode *inode = mapping->host;
 	struct ceph_fs_client *fsc = ceph_inode_to_fs_client(inode);
 	struct ceph_client *cl = fsc->client;
 	struct folio *folio = NULL;
 	unsigned i;
-	int rc = 0;
+	int rc;
 
 	for (i = 0; can_next_page_be_processed(ceph_wbc, i); i++) {
 		folio = ceph_wbc->fbatch.folios[i];
@@ -1327,12 +1321,11 @@ int ceph_process_folio_batch(struct address_space *mapping,
 		rc = ceph_check_page_before_write(mapping, wbc,
 						  ceph_wbc, folio);
 		if (rc == -ENODATA) {
-			rc = 0;
 			folio_unlock(folio);
+			folio_put(folio);
 			ceph_wbc->fbatch.folios[i] = NULL;
 			continue;
 		} else if (rc == -E2BIG) {
-			rc = 0;
 			folio_unlock(folio);
 			break;
 		}
@@ -1340,6 +1333,7 @@ int ceph_process_folio_batch(struct address_space *mapping,
 		if (!folio_clear_dirty_for_io(folio)) {
 			doutc(cl, "%p !folio_clear_dirty_for_io\n", folio);
 			folio_unlock(folio);
+			folio_put(folio);
 			ceph_wbc->fbatch.folios[i] = NULL;
 			continue;
 		}
@@ -1377,7 +1371,6 @@ int ceph_process_folio_batch(struct address_space *mapping,
 			if (ceph_wbc->len == 0)
 				ceph_wbc->num_ops--;
 
-			rc = 0;
 			folio_redirty_for_writepage(wbc, folio);
 			folio_unlock(folio);
 			break;
@@ -1388,8 +1381,6 @@ int ceph_process_folio_batch(struct address_space *mapping,
 	}
 
 	ceph_wbc->processed_in_fbatch = i;
-
-	return rc;
 }
 
 static inline
@@ -1675,7 +1666,9 @@ retry:
 		tag_pages_for_writeback(mapping, ceph_wbc.index, ceph_wbc.end);
 
 	while (!has_writeback_done(&ceph_wbc)) {
-		ceph_wbc.locked_pages = 0;
+		BUG_ON(ceph_wbc.locked_pages);
+		BUG_ON(ceph_wbc.pages);
+
 		ceph_wbc.max_pages = ceph_wbc.wsize >> PAGE_SHIFT;
 
 get_more_pages:
@@ -1693,10 +1686,8 @@ get_more_pages:
 			break;
 
 process_folio_batch:
-		rc = ceph_process_folio_batch(mapping, wbc, &ceph_wbc);
+		ceph_process_folio_batch(mapping, wbc, &ceph_wbc);
 		ceph_shift_unused_folios_left(&ceph_wbc.fbatch);
-		if (rc)
-			goto release_folios;
 
 		/* did we get anything? */
 		if (!ceph_wbc.locked_pages)
@@ -2518,7 +2509,7 @@ static int __ceph_pool_perm_get(struct ceph_inode_info *ci,
 	}
 
 	pool_ns_len = pool_ns ? pool_ns->len : 0;
-	perm = kmalloc(struct_size(perm, pool_ns, pool_ns_len + 1), GFP_NOFS);
+	perm = kmalloc_flex(*perm, pool_ns, pool_ns_len + 1, GFP_NOFS);
 	if (!perm) {
 		err = -ENOMEM;
 		goto out_unlock;

@@ -26,6 +26,7 @@
 #include <linux/fsmap.h>
 #include "fsmap.h"
 #include <trace/events/ext4.h>
+#include <linux/fserror.h>
 
 typedef void ext4_update_sb_callback(struct ext4_sb_info *sbi,
 				     struct ext4_super_block *es,
@@ -844,6 +845,7 @@ int ext4_force_shutdown(struct super_block *sb, u32 flags)
 		return -EINVAL;
 	}
 	clear_opt(sb, DISCARD);
+	fserror_report_shutdown(sb, GFP_KERNEL);
 	return 0;
 }
 
@@ -1647,16 +1649,6 @@ group_extend_out:
 
 		if (!(fd_file(donor)->f_mode & FMODE_WRITE))
 			return -EBADF;
-
-		if (ext4_has_feature_bigalloc(sb)) {
-			ext4_msg(sb, KERN_ERR,
-				 "Online defrag not supported with bigalloc");
-			return -EOPNOTSUPP;
-		} else if (IS_DAX(inode)) {
-			ext4_msg(sb, KERN_ERR,
-				 "Online defrag not supported with DAX");
-			return -EOPNOTSUPP;
-		}
 
 		err = mnt_want_write_file(filp);
 		if (err)

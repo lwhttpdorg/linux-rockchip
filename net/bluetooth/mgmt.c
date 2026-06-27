@@ -560,7 +560,7 @@ static int read_ext_index_list(struct sock *sk, struct hci_dev *hdev,
 	list_for_each_entry(d, &hci_dev_list, list)
 		count++;
 
-	rp = kmalloc(struct_size(rp, entry, count), GFP_ATOMIC);
+	rp = kmalloc_flex(*rp, entry, count, GFP_ATOMIC);
 	if (!rp) {
 		read_unlock(&hci_dev_list_lock);
 		return -ENOMEM;
@@ -858,6 +858,12 @@ static u32 get_supported_settings(struct hci_dev *hdev)
 	if (ll_privacy_capable(hdev))
 		settings |= MGMT_SETTING_LL_PRIVACY;
 
+	if (past_sender_capable(hdev))
+		settings |= MGMT_SETTING_PAST_SENDER;
+
+	if (past_receiver_capable(hdev))
+		settings |= MGMT_SETTING_PAST_RECEIVER;
+
 	settings |= MGMT_SETTING_PHY_CONFIGURATION;
 
 	return settings;
@@ -942,6 +948,12 @@ static u32 get_current_settings(struct hci_dev *hdev)
 
 	if (ll_privacy_enabled(hdev))
 		settings |= MGMT_SETTING_LL_PRIVACY;
+
+	if (past_sender_enabled(hdev))
+		settings |= MGMT_SETTING_PAST_SENDER;
+
+	if (past_receiver_enabled(hdev))
+		settings |= MGMT_SETTING_PAST_RECEIVER;
 
 	return settings;
 }
@@ -2760,7 +2772,7 @@ static int add_uuid(struct sock *sk, struct hci_dev *hdev, void *data, u16 len)
 		goto failed;
 	}
 
-	uuid = kmalloc(sizeof(*uuid), GFP_KERNEL);
+	uuid = kmalloc_obj(*uuid);
 	if (!uuid) {
 		err = -ENOMEM;
 		goto failed;
@@ -3353,7 +3365,7 @@ static int get_connections(struct sock *sk, struct hci_dev *hdev, void *data,
 			i++;
 	}
 
-	rp = kmalloc(struct_size(rp, addr, i), GFP_KERNEL);
+	rp = kmalloc_flex(*rp, addr, i);
 	if (!rp) {
 		err = -ENOMEM;
 		goto unlock;
@@ -4370,7 +4382,7 @@ static int set_blocked_keys(struct sock *sk, struct hci_dev *hdev, void *data,
 	hci_blocked_keys_clear(hdev);
 
 	for (i = 0; i < key_count; ++i) {
-		struct blocked_key *b = kzalloc(sizeof(*b), GFP_KERNEL);
+		struct blocked_key *b = kzalloc_obj(*b);
 
 		if (!b) {
 			err = MGMT_STATUS_NO_RESOURCES;
@@ -5123,6 +5135,69 @@ static void device_flags_changed(struct sock *sk, struct hci_dev *hdev,
 	mgmt_event(MGMT_EV_DEVICE_FLAGS_CHANGED, hdev, &ev, sizeof(ev), sk);
 }
 
+static bool is_connected(struct hci_dev *hdev, bdaddr_t *addr, u8 type)
+{
+	struct hci_conn *conn;
+
+	conn = hci_conn_hash_lookup_ba(hdev, LE_LINK, addr);
+	if (!conn)
+		return false;
+
+	if (conn->dst_type != type)
+		return false;
+
+	if (conn->state != BT_CONNECTED)
+		return false;
+
+	return true;
+}
+
+/* This function requires the caller holds hdev->lock */
+static struct hci_conn_params *hci_conn_params_set(struct hci_dev *hdev,
+						   bdaddr_t *addr, u8 addr_type,
+						   u8 auto_connect)
+{
+	struct hci_conn_params *params;
+
+	params = hci_conn_params_add(hdev, addr, addr_type);
+	if (!params)
+		return NULL;
+
+	if (params->auto_connect == auto_connect)
+		return params;
+
+	hci_pend_le_list_del_init(params);
+
+	switch (auto_connect) {
+	case HCI_AUTO_CONN_DISABLED:
+	case HCI_AUTO_CONN_LINK_LOSS:
+		/* If auto connect is being disabled when we're trying to
+		 * connect to device, keep connecting.
+		 */
+		if (params->explicit_connect)
+			hci_pend_le_list_add(params, &hdev->pend_le_conns);
+		break;
+	case HCI_AUTO_CONN_REPORT:
+		if (params->explicit_connect)
+			hci_pend_le_list_add(params, &hdev->pend_le_conns);
+		else
+			hci_pend_le_list_add(params, &hdev->pend_le_reports);
+		break;
+	case HCI_AUTO_CONN_DIRECT:
+	case HCI_AUTO_CONN_ALWAYS:
+		if (!is_connected(hdev, addr, addr_type))
+			hci_pend_le_list_add(params, &hdev->pend_le_conns);
+		break;
+	}
+
+	params->auto_connect = auto_connect;
+
+	bt_dev_dbg(hdev, "addr %pMR (type %u) auto_connect %u",
+		   addr, addr_type, auto_connect);
+
+	return params;
+}
+
 static int set_device_flags(struct sock *sk, struct hci_dev *hdev, void *data,
 			    u16 len)
 {
@@ -5166,9 +5241,16 @@ static int set_device_flags(struct sock *sk, struct hci_dev *hdev, void *data,
 	params = hci_conn_params_lookup(hdev, &cp->addr.bdaddr,
 					le_addr_type(cp->addr.type));
 	if (!params) {
-		bt_dev_warn(hdev, "No such LE device %pMR (0x%x)",
-			    &cp->addr.bdaddr, le_addr_type(cp->addr.type));
-		goto unlock;
+		/* Create a new hci_conn_params if it doesn't exist */
+		params = hci_conn_params_set(hdev, &cp->addr.bdaddr,
+					     le_addr_type(cp->addr.type),
+					     HCI_AUTO_CONN_DISABLED);
+		if (!params) {
+			bt_dev_warn(hdev, "No such LE device %pMR (0x%x)",
+				    &cp->addr.bdaddr,
+				    le_addr_type(cp->addr.type));
+			goto unlock;
+		}
 	}
 
 	supported_flags = hdev->conn_flags;
@@ -5413,7 +5495,7 @@ static u8 parse_adv_monitor_pattern(struct adv_monitor *m, u8 pattern_count,
 		    (offset + length) > HCI_MAX_AD_LENGTH)
 			return MGMT_STATUS_INVALID_PARAMS;
 
-		p = kmalloc(sizeof(*p), GFP_KERNEL);
+		p = kmalloc_obj(*p);
 		if (!p)
 			return MGMT_STATUS_NO_RESOURCES;
 
@@ -5450,7 +5532,7 @@ static int add_adv_patterns_monitor(struct sock *sk, struct hci_dev *hdev,
 		goto done;
 	}
 
-	m = kzalloc(sizeof(*m), GFP_KERNEL);
+	m = kzalloc_obj(*m);
 	if (!m) {
 		status = MGMT_STATUS_NO_RESOURCES;
 		goto done;
@@ -5487,7 +5569,7 @@ static int add_adv_patterns_monitor_rssi(struct sock *sk, struct hci_dev *hdev,
 		goto done;
 	}
 
-	m = kzalloc(sizeof(*m), GFP_KERNEL);
+	m = kzalloc_obj(*m);
 	if (!m) {
 		status = MGMT_STATUS_NO_RESOURCES;
 		goto done;
@@ -7559,68 +7641,6 @@ unlock:
 	return err;
 }
 
-static bool is_connected(struct hci_dev *hdev, bdaddr_t *addr, u8 type)
-{
-	struct hci_conn *conn;
-
-	conn = hci_conn_hash_lookup_ba(hdev, LE_LINK, addr);
-	if (!conn)
-		return false;
-
-	if (conn->dst_type != type)
-		return false;
-
-	if (conn->state != BT_CONNECTED)
-		return false;
-
-	return true;
-}
-
-/* This function requires the caller holds hdev->lock */
-static int hci_conn_params_set(struct hci_dev *hdev, bdaddr_t *addr,
-			       u8 addr_type, u8 auto_connect)
-{
-	struct hci_conn_params *params;
-
-	params = hci_conn_params_add(hdev, addr, addr_type);
-	if (!params)
-		return -EIO;
-
-	if (params->auto_connect == auto_connect)
-		return 0;
-
-	hci_pend_le_list_del_init(params);
-
-	switch (auto_connect) {
-	case HCI_AUTO_CONN_DISABLED:
-	case HCI_AUTO_CONN_LINK_LOSS:
-		/* If auto connect is being disabled when we're trying to
-		 * connect to device, keep connecting.
-		 */
-		if (params->explicit_connect)
-			hci_pend_le_list_add(params, &hdev->pend_le_conns);
-		break;
-	case HCI_AUTO_CONN_REPORT:
-		if (params->explicit_connect)
-			hci_pend_le_list_add(params, &hdev->pend_le_conns);
-		else
-			hci_pend_le_list_add(params, &hdev->pend_le_reports);
-		break;
-	case HCI_AUTO_CONN_DIRECT:
-	case HCI_AUTO_CONN_ALWAYS:
-		if (!is_connected(hdev, addr, addr_type))
-			hci_pend_le_list_add(params, &hdev->pend_le_conns);
-		break;
-	}
-
-	params->auto_connect = auto_connect;
-
-	bt_dev_dbg(hdev, "addr %pMR (type %u) auto_connect %u",
-		   addr, addr_type, auto_connect);
-
-	return 0;
-}
-
 static void device_added(struct sock *sk, struct hci_dev *hdev,
 			 bdaddr_t *bdaddr, u8 type, u8 action)
 {
@@ -7732,17 +7752,13 @@ static int add_device(struct sock *sk, struct hci_dev *hdev,
 	/* If the connection parameters don't exist for this device,
 	 * they will be created and configured with defaults.
 	 */
-	if (hci_conn_params_set(hdev, &cp->addr.bdaddr, addr_type,
-				auto_conn) < 0) {
+	params = hci_conn_params_set(hdev, &cp->addr.bdaddr, addr_type,
+				     auto_conn);
+	if (!params) {
 		err = mgmt_cmd_complete(sk, hdev->id, MGMT_OP_ADD_DEVICE,
 					MGMT_STATUS_FAILED, &cp->addr,
 					sizeof(cp->addr));
 		goto unlock;
-	} else {
-		params = hci_conn_params_lookup(hdev, &cp->addr.bdaddr,
-						addr_type);
-		if (params)
-			current_flags = params->flags;
 	}
 
 	cmd = mgmt_pending_new(sk, MGMT_OP_ADD_DEVICE, hdev, data, len);

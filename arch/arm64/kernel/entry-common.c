@@ -21,7 +21,6 @@
 #include <asm/daifflags.h>
 #include <asm/esr.h>
 #include <asm/exception.h>
-#include <asm/fpsimd.h>
 #include <asm/irq_regs.h>
 #include <asm/kprobes.h>
 #include <asm/mmu.h>
@@ -35,20 +34,12 @@
  * Handle IRQ/context state management when entering from kernel mode.
  * Before this function is called it is not safe to call regular kernel code,
  * instrumentable code, or any code which may trigger an exception.
- *
- * This is intended to match the logic in irqentry_enter(), handling the kernel
- * mode transitions only.
  */
-static __always_inline irqentry_state_t __enter_from_kernel_mode(struct pt_regs *regs)
-{
-	return irqentry_enter(regs);
-}
-
 static noinstr irqentry_state_t enter_from_kernel_mode(struct pt_regs *regs)
 {
 	irqentry_state_t state;
 
-	state = __enter_from_kernel_mode(regs);
+	state = irqentry_enter(regs);
 	mte_check_tfsr_entry();
 	mte_disable_tco_entry(current);
 
@@ -59,21 +50,12 @@ static noinstr irqentry_state_t enter_from_kernel_mode(struct pt_regs *regs)
  * Handle IRQ/context state management when exiting to kernel mode.
  * After this function returns it is not safe to call regular kernel code,
  * instrumentable code, or any code which may trigger an exception.
- *
- * This is intended to match the logic in irqentry_exit(), handling the kernel
- * mode transitions only, and with preemption handled elsewhere.
  */
-static __always_inline void __exit_to_kernel_mode(struct pt_regs *regs,
-						  irqentry_state_t state)
-{
-	irqentry_exit(regs, state);
-}
-
 static void noinstr exit_to_kernel_mode(struct pt_regs *regs,
 					irqentry_state_t state)
 {
 	mte_check_tfsr_exit();
-	__exit_to_kernel_mode(regs, state);
+	irqentry_exit(regs, state);
 }
 
 /*
@@ -81,16 +63,10 @@ static void noinstr exit_to_kernel_mode(struct pt_regs *regs,
  * Before this function is called it is not safe to call regular kernel code,
  * instrumentable code, or any code which may trigger an exception.
  */
-static __always_inline void __enter_from_user_mode(struct pt_regs *regs)
+static __always_inline void arm64_enter_from_user_mode(struct pt_regs *regs)
 {
 	enter_from_user_mode(regs);
 	mte_disable_tco_entry(current);
-	sme_enter_from_user_mode();
-}
-
-static __always_inline void arm64_enter_from_user_mode(struct pt_regs *regs)
-{
-	__enter_from_user_mode(regs);
 }
 
 /*
@@ -102,9 +78,8 @@ static __always_inline void arm64_enter_from_user_mode(struct pt_regs *regs)
 static __always_inline void arm64_exit_to_user_mode(struct pt_regs *regs)
 {
 	local_irq_disable();
-	exit_to_user_mode_prepare(regs);
+	exit_to_user_mode_prepare_legacy(regs);
 	local_daif_mask();
-	sme_exit_to_user_mode();
 	mte_check_tfsr_exit();
 	exit_to_user_mode();
 }

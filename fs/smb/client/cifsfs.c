@@ -28,17 +28,17 @@
 #include <linux/splice.h>
 #include <linux/uuid.h>
 #include <linux/xattr.h>
+#include <linux/mm.h>
+#include <linux/key-type.h>
 #include <uapi/linux/magic.h>
 #include <net/ipv6.h>
 #include "cifsfs.h"
-#include "cifspdu.h"
 #define DECLARE_GLOBALS_HERE
 #include "cifsglob.h"
 #include "cifsproto.h"
+#include "smb2proto.h"
 #include "cifs_debug.h"
 #include "cifs_fs_sb.h"
-#include <linux/mm.h>
-#include <linux/key-type.h>
 #include "cifs_spnego.h"
 #include "fscache.h"
 #ifdef CONFIG_CIFS_DFS_UPCALL
@@ -226,16 +226,18 @@ cifs_sb_deactive(struct super_block *sb)
 static int
 cifs_read_super(struct super_block *sb)
 {
-	struct inode *inode;
 	struct cifs_sb_info *cifs_sb;
 	struct cifs_tcon *tcon;
+	unsigned int sbflags;
 	struct timespec64 ts;
+	struct inode *inode;
 	int rc = 0;
 
 	cifs_sb = CIFS_SB(sb);
 	tcon = cifs_sb_master_tcon(cifs_sb);
+	sbflags = cifs_sb_flags(cifs_sb);
 
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_POSIXACL)
+	if (sbflags & CIFS_MOUNT_POSIXACL)
 		sb->s_flags |= SB_POSIXACL;
 
 	if (tcon->snapshot_time)
@@ -311,7 +313,7 @@ cifs_read_super(struct super_block *sb)
 	}
 
 #ifdef CONFIG_CIFS_NFSD_EXPORT
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_SERVER_INUM) {
+	if (sbflags & CIFS_MOUNT_SERVER_INUM) {
 		cifs_dbg(FYI, "export ops supported\n");
 		sb->s_export_op = &cifs_export_ops;
 	}
@@ -395,8 +397,7 @@ statfs_out:
 
 static long cifs_fallocate(struct file *file, int mode, loff_t off, loff_t len)
 {
-	struct cifs_sb_info *cifs_sb = CIFS_FILE_SB(file);
-	struct cifs_tcon *tcon = cifs_sb_master_tcon(cifs_sb);
+	struct cifs_tcon *tcon = cifs_sb_master_tcon(CIFS_SB(file));
 	struct TCP_Server_Info *server = tcon->ses->server;
 	struct inode *inode = file_inode(file);
 	int rc;
@@ -424,11 +425,9 @@ out_unlock:
 static int cifs_permission(struct mnt_idmap *idmap,
 			   struct inode *inode, int mask)
 {
-	struct cifs_sb_info *cifs_sb;
+	unsigned int sbflags = cifs_sb_flags(CIFS_SB(inode));
 
-	cifs_sb = CIFS_SB(inode->i_sb);
-
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_NO_PERM) {
+	if (sbflags & CIFS_MOUNT_NO_PERM) {
 		if ((mask & MAY_EXEC) && !execute_ok(inode))
 			return -EACCES;
 		else
@@ -448,7 +447,7 @@ static struct kmem_cache *cifs_io_request_cachep;
 static struct kmem_cache *cifs_io_subrequest_cachep;
 mempool_t *cifs_sm_req_poolp;
 mempool_t *cifs_req_poolp;
-mempool_t *cifs_mid_poolp;
+mempool_t cifs_mid_pool;
 mempool_t cifs_io_request_pool;
 mempool_t cifs_io_subrequest_pool;
 
@@ -471,7 +470,8 @@ cifs_alloc_inode(struct super_block *sb)
 	spin_lock_init(&cifs_inode->writers_lock);
 	cifs_inode->writers = 0;
 	cifs_inode->netfs.inode.i_blkbits = 14;  /* 2**14 = CIFS_MAX_MSGSIZE */
-	cifs_inode->netfs.remote_i_size = 0;
+	cifs_inode->netfs._remote_i_size = 0;
+	cifs_inode->netfs._zero_point = 0;
 	cifs_inode->uniqueid = 0;
 	cifs_inode->createtime = 0;
 	cifs_inode->epoch = 0;
@@ -506,7 +506,7 @@ cifs_evict_inode(struct inode *inode)
 {
 	netfs_wait_for_outstanding_io(inode);
 	truncate_inode_pages_final(&inode->i_data);
-	if (inode->i_state & I_PINNING_NETFS_WB)
+	if (inode_state_read_once(inode) & I_PINNING_NETFS_WB)
 		cifs_fscache_unuse_inode_cookie(inode, true);
 	cifs_fscache_release_inode_cookie(inode);
 	clear_inode(inode);
@@ -574,15 +574,17 @@ cifs_show_security(struct seq_file *s, struct cifs_ses *ses)
 static void
 cifs_show_cache_flavor(struct seq_file *s, struct cifs_sb_info *cifs_sb)
 {
+	unsigned int sbflags = cifs_sb_flags(cifs_sb);
+
 	seq_puts(s, ",cache=");
 
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_STRICT_IO)
+	if (sbflags & CIFS_MOUNT_STRICT_IO)
 		seq_puts(s, "strict");
-	else if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_DIRECT_IO)
+	else if (sbflags & CIFS_MOUNT_DIRECT_IO)
 		seq_puts(s, "none");
-	else if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_RW_CACHE)
+	else if (sbflags & CIFS_MOUNT_RW_CACHE)
 		seq_puts(s, "singleclient"); /* assume only one client access */
-	else if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_RO_CACHE)
+	else if (sbflags & CIFS_MOUNT_RO_CACHE)
 		seq_puts(s, "ro"); /* read only caching assumed */
 	else
 		seq_puts(s, "loose");
@@ -643,6 +645,8 @@ cifs_show_options(struct seq_file *s, struct dentry *root)
 	struct cifs_sb_info *cifs_sb = CIFS_SB(root->d_sb);
 	struct cifs_tcon *tcon = cifs_sb_master_tcon(cifs_sb);
 	struct sockaddr *srcaddr;
+	unsigned int sbflags;
+
 	srcaddr = (struct sockaddr *)&tcon->ses->server->srcaddr;
 
 	seq_show_option(s, "vers", tcon->ses->server->vals->version_string);
@@ -676,16 +680,17 @@ cifs_show_options(struct seq_file *s, struct dentry *root)
 				   (int)(srcaddr->sa_family));
 	}
 
+	sbflags = cifs_sb_flags(cifs_sb);
 	seq_printf(s, ",uid=%u",
 		   from_kuid_munged(&init_user_ns, cifs_sb->ctx->linux_uid));
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_OVERR_UID)
+	if (sbflags & CIFS_MOUNT_OVERR_UID)
 		seq_puts(s, ",forceuid");
 	else
 		seq_puts(s, ",noforceuid");
 
 	seq_printf(s, ",gid=%u",
 		   from_kgid_munged(&init_user_ns, cifs_sb->ctx->linux_gid));
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_OVERR_GID)
+	if (sbflags & CIFS_MOUNT_OVERR_GID)
 		seq_puts(s, ",forcegid");
 	else
 		seq_puts(s, ",noforcegid");
@@ -728,53 +733,53 @@ cifs_show_options(struct seq_file *s, struct dentry *root)
 		seq_puts(s, ",unix");
 	else
 		seq_puts(s, ",nounix");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_NO_DFS)
+	if (sbflags & CIFS_MOUNT_NO_DFS)
 		seq_puts(s, ",nodfs");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_POSIX_PATHS)
+	if (sbflags & CIFS_MOUNT_POSIX_PATHS)
 		seq_puts(s, ",posixpaths");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_SET_UID)
+	if (sbflags & CIFS_MOUNT_SET_UID)
 		seq_puts(s, ",setuids");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_UID_FROM_ACL)
+	if (sbflags & CIFS_MOUNT_UID_FROM_ACL)
 		seq_puts(s, ",idsfromsid");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_SERVER_INUM)
+	if (sbflags & CIFS_MOUNT_SERVER_INUM)
 		seq_puts(s, ",serverino");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_RWPIDFORWARD)
+	if (sbflags & CIFS_MOUNT_RWPIDFORWARD)
 		seq_puts(s, ",rwpidforward");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_NOPOSIXBRL)
+	if (sbflags & CIFS_MOUNT_NOPOSIXBRL)
 		seq_puts(s, ",forcemand");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_NO_XATTR)
+	if (sbflags & CIFS_MOUNT_NO_XATTR)
 		seq_puts(s, ",nouser_xattr");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_MAP_SPECIAL_CHR)
+	if (sbflags & CIFS_MOUNT_MAP_SPECIAL_CHR)
 		seq_puts(s, ",mapchars");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_MAP_SFM_CHR)
+	if (sbflags & CIFS_MOUNT_MAP_SFM_CHR)
 		seq_puts(s, ",mapposix");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_UNX_EMUL)
+	if (sbflags & CIFS_MOUNT_UNX_EMUL)
 		seq_puts(s, ",sfu");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_NO_BRL)
+	if (sbflags & CIFS_MOUNT_NO_BRL)
 		seq_puts(s, ",nobrl");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_NO_HANDLE_CACHE)
+	if (sbflags & CIFS_MOUNT_NO_HANDLE_CACHE)
 		seq_puts(s, ",nohandlecache");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_MODE_FROM_SID)
+	if (sbflags & CIFS_MOUNT_MODE_FROM_SID)
 		seq_puts(s, ",modefromsid");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_CIFS_ACL)
+	if (sbflags & CIFS_MOUNT_CIFS_ACL)
 		seq_puts(s, ",cifsacl");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_DYNPERM)
+	if (sbflags & CIFS_MOUNT_DYNPERM)
 		seq_puts(s, ",dynperm");
 	if (root->d_sb->s_flags & SB_POSIXACL)
 		seq_puts(s, ",acl");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_MF_SYMLINKS)
+	if (sbflags & CIFS_MOUNT_MF_SYMLINKS)
 		seq_puts(s, ",mfsymlinks");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_FSCACHE)
+	if (sbflags & CIFS_MOUNT_FSCACHE)
 		seq_puts(s, ",fsc");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_NOSSYNC)
+	if (sbflags & CIFS_MOUNT_NOSSYNC)
 		seq_puts(s, ",nostrictsync");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_NO_PERM)
+	if (sbflags & CIFS_MOUNT_NO_PERM)
 		seq_puts(s, ",noperm");
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_CIFS_BACKUPUID)
+	if (sbflags & CIFS_MOUNT_CIFS_BACKUPUID)
 		seq_printf(s, ",backupuid=%u",
 			   from_kuid_munged(&init_user_ns,
 					    cifs_sb->ctx->backupuid));
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_CIFS_BACKUPGID)
+	if (sbflags & CIFS_MOUNT_CIFS_BACKUPGID)
 		seq_printf(s, ",backupgid=%u",
 			   from_kgid_munged(&init_user_ns,
 					    cifs_sb->ctx->backupgid));
@@ -914,10 +919,10 @@ static int cifs_write_inode(struct inode *inode, struct writeback_control *wbc)
 
 static int cifs_drop_inode(struct inode *inode)
 {
-	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
+	unsigned int sbflags = cifs_sb_flags(CIFS_SB(inode));
 
 	/* no serverino => unconditional eviction */
-	return !(cifs_sb->mnt_cifs_flags & CIFS_MOUNT_SERVER_INUM) ||
+	return !(sbflags & CIFS_MOUNT_SERVER_INUM) ||
 		inode_generic_drop(inode);
 }
 
@@ -955,7 +960,7 @@ cifs_get_root(struct smb3_fs_context *ctx, struct super_block *sb)
 	char *s, *p;
 	char sep;
 
-	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_USE_PREFIX_PATH)
+	if (cifs_sb_flags(cifs_sb) & CIFS_MOUNT_USE_PREFIX_PATH)
 		return dget(sb->s_root);
 
 	full_path = cifs_build_path_to_root(ctx, cifs_sb,
@@ -1021,12 +1026,11 @@ cifs_smb3_do_mount(struct file_system_type *fs_type,
 	} else {
 		cifs_info("Attempting to mount %s\n", old_ctx->source);
 	}
-
-	cifs_sb = kzalloc(sizeof(*cifs_sb), GFP_KERNEL);
+	cifs_sb = kzalloc_obj(*cifs_sb);
 	if (!cifs_sb)
 		return ERR_PTR(-ENOMEM);
 
-	cifs_sb->ctx = kzalloc(sizeof(struct smb3_fs_context), GFP_KERNEL);
+	cifs_sb->ctx = kzalloc_obj(struct smb3_fs_context);
 	if (!cifs_sb->ctx) {
 		root = ERR_PTR(-ENOMEM);
 		goto out;
@@ -1268,7 +1272,7 @@ static int cifs_precopy_set_eof(struct inode *src_inode, struct cifsInodeInfo *s
 	struct cifsFileInfo *writeable_srcfile;
 	int rc = -EINVAL;
 
-	writeable_srcfile = find_writable_file(src_cifsi, FIND_WR_FSUID_ONLY);
+	writeable_srcfile = find_writable_file(src_cifsi, FIND_FSUID_ONLY);
 	if (writeable_srcfile) {
 		if (src_tcon->ses->server->ops->set_file_size)
 			rc = src_tcon->ses->server->ops->set_file_size(
@@ -1335,7 +1339,8 @@ static loff_t cifs_remap_file_range(struct file *src_file, loff_t off,
 	struct cifsFileInfo *smb_file_src = src_file->private_data;
 	struct cifsFileInfo *smb_file_target = dst_file->private_data;
 	struct cifs_tcon *target_tcon, *src_tcon;
-	unsigned long long destend, fstart, fend, old_size, new_size;
+	unsigned long long i_size, new_size;
+	unsigned long long destend, fstart, fend;
 	unsigned int xid;
 	int rc;
 
@@ -1379,7 +1384,7 @@ static loff_t cifs_remap_file_range(struct file *src_file, loff_t off,
 	 * Advance the EOF marker after the flush above to the end of the range
 	 * if it's short of that.
 	 */
-	if (src_cifsi->netfs.remote_i_size < off + len) {
+	if (netfs_read_remote_i_size(src_inode) < off + len) {
 		rc = cifs_precopy_set_eof(src_inode, src_cifsi, src_tcon, xid, off + len);
 		if (rc < 0)
 			goto unlock;
@@ -1400,22 +1405,24 @@ static loff_t cifs_remap_file_range(struct file *src_file, loff_t off,
 	rc = cifs_flush_folio(target_inode, destend, &fstart, &fend, false);
 	if (rc)
 		goto unlock;
-	if (fend > target_cifsi->netfs.zero_point)
-		target_cifsi->netfs.zero_point = fend + 1;
-	old_size = target_cifsi->netfs.remote_i_size;
+
+	spin_lock(&target_inode->i_lock);
+	if (fend > target_cifsi->netfs._zero_point)
+		netfs_write_zero_point(target_inode, fend + 1);
+	i_size = target_inode->i_size;
+	spin_unlock(&target_inode->i_lock);
 
 	/* Discard all the folios that overlap the destination region. */
 	cifs_dbg(FYI, "about to discard pages %llx-%llx\n", fstart, fend);
 	truncate_inode_pages_range(&target_inode->i_data, fstart, fend);
 
-	fscache_invalidate(cifs_inode_cookie(target_inode), NULL,
-			   i_size_read(target_inode), 0);
+	fscache_invalidate(cifs_inode_cookie(target_inode), NULL, i_size, 0);
 
 	rc = -EOPNOTSUPP;
 	if (target_tcon->ses->server->ops->duplicate_extents) {
 		rc = target_tcon->ses->server->ops->duplicate_extents(xid,
 			smb_file_src, smb_file_target, off, len, destoff);
-		if (rc == 0 && new_size > old_size) {
+		if (rc == 0 && new_size > i_size) {
 			truncate_setsize(target_inode, new_size);
 			fscache_resize_cookie(cifs_inode_cookie(target_inode),
 					      new_size);
@@ -1434,8 +1441,12 @@ static loff_t cifs_remap_file_range(struct file *src_file, loff_t off,
 					rc = -EINVAL;
 			}
 		}
-		if (rc == 0 && new_size > target_cifsi->netfs.zero_point)
-			target_cifsi->netfs.zero_point = new_size;
+		if (rc == 0) {
+			spin_lock(&target_inode->i_lock);
+			if (new_size > target_cifsi->netfs._zero_point)
+				netfs_write_zero_point(target_inode, new_size);
+			spin_unlock(&target_inode->i_lock);
+		}
 	}
 
 	/* force revalidate of size and timestamps of target file now
@@ -1506,7 +1517,7 @@ ssize_t cifs_file_copychunk_range(unsigned int xid,
 	 * Advance the EOF marker after the flush above to the end of the range
 	 * if it's short of that.
 	 */
-	if (src_cifsi->netfs.remote_i_size < off + len) {
+	if (netfs_read_remote_i_size(src_inode) < off + len) {
 		rc = cifs_precopy_set_eof(src_inode, src_cifsi, src_tcon, xid, off + len);
 		if (rc < 0)
 			goto unlock;
@@ -1534,8 +1545,12 @@ ssize_t cifs_file_copychunk_range(unsigned int xid,
 			fscache_resize_cookie(cifs_inode_cookie(target_inode),
 					      i_size_read(target_inode));
 		}
-		if (rc > 0 && destoff + rc > target_cifsi->netfs.zero_point)
-			target_cifsi->netfs.zero_point = destoff + rc;
+		if (rc > 0) {
+			spin_lock(&target_inode->i_lock);
+			if (destoff + rc > target_cifsi->netfs._zero_point)
+				netfs_write_zero_point(target_inode, destoff + rc);
+			spin_unlock(&target_inode->i_lock);
+		}
 	}
 
 	file_accessed(src_file);
@@ -1849,8 +1864,7 @@ static int init_mids(void)
 		return -ENOMEM;
 
 	/* 3 is a reasonable minimum number of simultaneous operations */
-	cifs_mid_poolp = mempool_create_slab_pool(3, cifs_mid_cachep);
-	if (cifs_mid_poolp == NULL) {
+	if (mempool_init_slab_pool(&cifs_mid_pool, 3, cifs_mid_cachep) < 0) {
 		kmem_cache_destroy(cifs_mid_cachep);
 		return -ENOMEM;
 	}
@@ -1860,7 +1874,7 @@ static int init_mids(void)
 
 static void destroy_mids(void)
 {
-	mempool_destroy(cifs_mid_poolp);
+	mempool_exit(&cifs_mid_pool);
 	kmem_cache_destroy(cifs_mid_cachep);
 }
 
@@ -1910,6 +1924,11 @@ static int __init
 init_cifs(void)
 {
 	int rc = 0;
+
+	rc = smb2_init_maperror();
+	if (rc)
+		return rc;
+
 	cifs_proc_init();
 	INIT_LIST_HEAD(&cifs_tcp_ses_list);
 /*

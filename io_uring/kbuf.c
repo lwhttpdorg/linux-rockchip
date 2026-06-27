@@ -52,7 +52,7 @@ static bool io_kbuf_inc_commit(struct io_buffer_list *bl, int len)
 			WRITE_ONCE(buf->len, buf_len);
 			return false;
 		}
-		buf->len = 0;
+		WRITE_ONCE(buf->len, 0);
 		bl->head++;
 		len -= this_len;
 	}
@@ -184,7 +184,7 @@ static bool io_should_commit(struct io_kiocb *req, unsigned int issue_flags)
 		return true;
 
 	/* uring_cmd commits kbuf upfront, no need to auto-commit */
-	if (!io_file_can_poll(req) && req->opcode != IORING_OP_URING_CMD)
+	if (!io_file_can_poll(req) && !io_is_uring_cmd(req))
 		return true;
 	return false;
 }
@@ -279,7 +279,7 @@ static int io_ring_buffers_peek(struct io_kiocb *req, struct buf_sel_arg *arg,
 	 * a speculative peek operation.
 	 */
 	if (arg->mode & KBUF_MODE_EXPAND && nr_avail > nr_iovs && arg->max_len) {
-		iov = kmalloc_array(nr_avail, sizeof(struct iovec), GFP_KERNEL);
+		iov = kmalloc_objs(struct iovec, nr_avail);
 		if (unlikely(!iov))
 			return -ENOMEM;
 		if (arg->mode & KBUF_MODE_FREE)
@@ -444,7 +444,7 @@ static int io_remove_buffers_legacy(struct io_ring_ctx *ctx,
 static void io_put_bl(struct io_ring_ctx *ctx, struct io_buffer_list *bl)
 {
 	if (bl->flags & IOBL_BUF_RING)
-		io_free_region(ctx, &bl->region);
+		io_free_region(ctx->user, &bl->region);
 	else
 		io_remove_buffers_legacy(ctx, bl, -1U);
 
@@ -548,7 +548,7 @@ static int io_add_buffers(struct io_ring_ctx *ctx, struct io_provide_buf *pbuf,
 			ret = -EOVERFLOW;
 			break;
 		}
-		buf = kmalloc(sizeof(*buf), GFP_KERNEL_ACCOUNT);
+		buf = kmalloc_obj(*buf, GFP_KERNEL_ACCOUNT);
 		if (!buf)
 			break;
 
@@ -575,7 +575,7 @@ static int __io_manage_buffers_legacy(struct io_kiocb *req,
 	if (!bl) {
 		if (req->opcode != IORING_OP_PROVIDE_BUFFERS)
 			return -ENOENT;
-		bl = kzalloc(sizeof(*bl), GFP_KERNEL_ACCOUNT);
+		bl = kzalloc_obj(*bl, GFP_KERNEL_ACCOUNT);
 		if (!bl)
 			return -ENOMEM;
 
@@ -648,7 +648,7 @@ int io_register_pbuf_ring(struct io_ring_ctx *ctx, void __user *arg)
 		io_destroy_bl(ctx, bl);
 	}
 
-	bl = kzalloc(sizeof(*bl), GFP_KERNEL_ACCOUNT);
+	bl = kzalloc_obj(*bl, GFP_KERNEL_ACCOUNT);
 	if (!bl)
 		return -ENOMEM;
 
@@ -661,7 +661,7 @@ int io_register_pbuf_ring(struct io_ring_ctx *ctx, void __user *arg)
 		rd.user_addr = reg.ring_addr;
 		rd.flags |= IORING_MEM_REGION_TYPE_USER;
 	}
-	ret = io_create_region_mmap_safe(ctx, &bl->region, &rd, mmap_offset);
+	ret = io_create_region(ctx, &bl->region, &rd, mmap_offset);
 	if (ret)
 		goto fail;
 	br = io_region_get_ptr(&bl->region);
@@ -695,7 +695,7 @@ int io_register_pbuf_ring(struct io_ring_ctx *ctx, void __user *arg)
 	if (!ret)
 		return 0;
 fail:
-	io_free_region(ctx, &bl->region);
+	io_free_region(ctx->user, &bl->region);
 	kfree(bl);
 	return ret;
 }

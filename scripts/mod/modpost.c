@@ -610,6 +610,11 @@ static int ignore_undef_symbol(struct elf_info *info, const char *symname)
 		    strstarts(symname, "_savevr_") ||
 		    strcmp(symname, ".TOC.") == 0)
 			return 1;
+
+	/* ignore linker-created section bounds variables */
+	if (strstarts(symname, "__start_") || strstarts(symname, "__stop_"))
+		return 1;
+
 	/* Do not ignore this symbol */
 	return 0;
 }
@@ -957,7 +962,7 @@ static int secref_whitelist(const char *fromsec, const char *fromsym,
 	/* symbols in data sections that may refer to any init/exit sections */
 	if (match(fromsec, PATTERNS(DATA_SECTIONS)) &&
 	    match(tosec, PATTERNS(ALL_INIT_SECTIONS, ALL_EXIT_SECTIONS)) &&
-	    match(fromsym, PATTERNS("*_ops", "*_probe", "*_console")))
+	    match(fromsym, PATTERNS("*_ops", "*_console")))
 		return 0;
 
 	/* Check for pattern 3 */

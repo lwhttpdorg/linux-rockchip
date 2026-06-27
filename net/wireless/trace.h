@@ -3915,19 +3915,22 @@ TRACE_EVENT(cfg80211_ft_event,
 		  WIPHY_PR_ARG, NETDEV_PR_ARG, __entry->target_ap)
 );
 
-TRACE_EVENT(cfg80211_stop_iface,
-	TP_PROTO(struct wiphy *wiphy, struct wireless_dev *wdev),
-	TP_ARGS(wiphy, wdev),
+TRACE_EVENT(cfg80211_stop_link,
+	TP_PROTO(struct wiphy *wiphy, struct wireless_dev *wdev,
+		 int link_id),
+	TP_ARGS(wiphy, wdev, link_id),
 	TP_STRUCT__entry(
 		WIPHY_ENTRY
 		WDEV_ENTRY
+		__field(int, link_id)
 	),
 	TP_fast_assign(
 		WIPHY_ASSIGN;
 		WDEV_ASSIGN;
+		__entry->link_id = link_id;
 	),
-	TP_printk(WIPHY_PR_FMT ", " WDEV_PR_FMT,
-		  WIPHY_PR_ARG, WDEV_PR_ARG)
+	TP_printk(WIPHY_PR_FMT ", " WDEV_PR_FMT ", link_id: %d",
+		  WIPHY_PR_ARG, WDEV_PR_ARG, __entry->link_id)
 );
 
 TRACE_EVENT(cfg80211_pmsr_report,
@@ -4221,6 +4224,25 @@ TRACE_EVENT(cfg80211_nan_cluster_joined,
 	TP_printk(WDEV_PR_FMT " cluster_id %pMF%s",
 		  WDEV_PR_ARG, __entry->cluster_id,
 		  __entry->new_cluster ? " [new]" : "")
+);
+
+TRACE_EVENT(cfg80211_incumbent_signal_notify,
+	TP_PROTO(struct wiphy *wiphy,
+		 const struct cfg80211_chan_def *chandef,
+		 u32 signal_interference_bitmap),
+	TP_ARGS(wiphy, chandef, signal_interference_bitmap),
+	TP_STRUCT__entry(
+		WIPHY_ENTRY
+		CHAN_DEF_ENTRY
+		__field(u32, signal_interference_bitmap)
+	),
+	TP_fast_assign(
+		WIPHY_ASSIGN;
+		CHAN_DEF_ASSIGN(chandef);
+		__entry->signal_interference_bitmap = signal_interference_bitmap;
+	),
+	TP_printk(WIPHY_PR_FMT ", " CHAN_DEF_PR_FMT ", signal_interference_bitmap=0x%x",
+		  WIPHY_PR_ARG, CHAN_DEF_PR_ARG, __entry->signal_interference_bitmap)
 );
 #endif /* !__RDEV_OPS_TRACE || TRACE_HEADER_MULTI_READ */
 

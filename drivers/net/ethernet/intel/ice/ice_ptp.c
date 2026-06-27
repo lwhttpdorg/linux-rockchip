@@ -500,6 +500,9 @@ void ice_ptp_complete_tx_single_tstamp(struct ice_ptp_tx *tx)
 	if (tstamp) {
 		shhwtstamps.hwtstamp = ns_to_ktime(tstamp);
 		ice_trace(tx_tstamp_complete, skb, idx);
+
+		/* Count the number of Tx timestamps that succeeded */
+		pf->ptp.tx_hwtstamp_good++;
 	}
 
 	skb_tstamp_tx(skb, &shhwtstamps);
@@ -558,6 +561,7 @@ static void ice_ptp_process_tx_tstamp(struct ice_ptp_tx *tx)
 {
 	struct ice_ptp_port *ptp_port;
 	unsigned long flags;
+	u32 tstamp_good = 0;
 	struct ice_pf *pf;
 	struct ice_hw *hw;
 	u64 tstamp_ready;
@@ -661,11 +665,16 @@ skip_ts_read:
 		if (tstamp) {
 			shhwtstamps.hwtstamp = ns_to_ktime(tstamp);
 			ice_trace(tx_tstamp_complete, skb, idx);
+
+			/* Count the number of Tx timestamps that succeeded */
+			tstamp_good++;
 		}
 
 		skb_tstamp_tx(skb, &shhwtstamps);
 		dev_kfree_skb_any(skb);
 	}
+
+	pf->ptp.tx_hwtstamp_good += tstamp_good;
 }
 
 static void ice_ptp_tx_tstamp_owner(struct ice_pf *pf)
@@ -697,7 +706,7 @@ ice_ptp_alloc_tx_tracker(struct ice_ptp_tx *tx)
 	unsigned long *in_use, *stale;
 	struct ice_tx_tstamp *tstamps;
 
-	tstamps = kcalloc(tx->len, sizeof(*tstamps), GFP_KERNEL);
+	tstamps = kzalloc_objs(*tstamps, tx->len);
 	in_use = bitmap_zalloc(tx->len, GFP_KERNEL);
 	stale = bitmap_zalloc(tx->len, GFP_KERNEL);
 
@@ -1286,6 +1295,40 @@ void ice_ptp_link_change(struct ice_pf *pf, bool linkup)
 	/* Skip HW writes if reset is in progress */
 	if (pf->hw.reset_ongoing)
 		return;
+
+	if (hw->mac_type == ICE_MAC_GENERIC_3K_E825 &&
+	    test_bit(ICE_FLAG_DPLL, pf->flags)) {
+		int pin, err;
+
+		mutex_lock(&pf->dplls.lock);
+		for (pin = 0; pin < ICE_SYNCE_CLK_NUM; pin++) {
+			enum ice_synce_clk clk_pin;
+			bool active;
+			u8 port_num;
+
+			port_num = ptp_port->port_num;
+			clk_pin = (enum ice_synce_clk)pin;
+			err = ice_tspll_bypass_mux_active_e825c(hw,
+								port_num,
+								&active,
+								clk_pin);
+			if (err) {
+				dev_err_once(ice_pf_to_dev(pf),
+					     "Failed to read SyncE bypass mux for pin %d, err %d\n",
+					     pin, err);
+				break;
+			}
+
+			err = ice_tspll_cfg_synce_ethdiv_e825c(hw, clk_pin);
+			if (active && err) {
+				dev_err_once(ice_pf_to_dev(pf),
+					     "Failed to configure SyncE ETH divider for pin %d, err %d\n",
+					     pin, err);
+				break;
+			}
+		}
+		mutex_unlock(&pf->dplls.lock);
+	}
 
 	switch (hw->mac_type) {
 	case ICE_MAC_E810:
@@ -2164,8 +2207,7 @@ static int ice_ptp_getcrosststamp(struct ptp_clock_info *info,
 int ice_ptp_hwtstamp_get(struct net_device *netdev,
 			 struct kernel_hwtstamp_config *config)
 {
-	struct ice_netdev_priv *np = netdev_priv(netdev);
-	struct ice_pf *pf = np->vsi->back;
+	struct ice_pf *pf = ice_netdev_to_pf(netdev);
 
 	if (pf->ptp.state != ICE_PTP_READY)
 		return -EIO;
@@ -2236,8 +2278,7 @@ int ice_ptp_hwtstamp_set(struct net_device *netdev,
 			 struct kernel_hwtstamp_config *config,
 			 struct netlink_ext_ack *extack)
 {
-	struct ice_netdev_priv *np = netdev_priv(netdev);
-	struct ice_pf *pf = np->vsi->back;
+	struct ice_pf *pf = ice_netdev_to_pf(netdev);
 	int err;
 
 	if (pf->ptp.state != ICE_PTP_READY)

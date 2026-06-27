@@ -170,7 +170,6 @@ struct iwl_fw_mon_regs {
  *	for aggregation
  * @min_txq_size: minimum number of slots required in a TX queue
  * @gp2_reg_addr: GP2 (timer) register address
- * @min_umac_error_event_table: minimum SMEM location of UMAC error table
  * @mon_dbgi_regs: monitor DBGI registers
  * @mon_dram_regs: monitor DRAM registers
  * @mon_smem_regs: monitor SMEM registers
@@ -203,7 +202,6 @@ struct iwl_family_base_params {
 	netdev_features_t features;
 	u32 smem_offset;
 	u32 smem_len;
-	u32 min_umac_error_event_table;
 	u32 d3_debug_data_base_addr;
 	u32 d3_debug_data_length;
 	u32 min_txq_size;
@@ -688,7 +686,7 @@ extern const char iwl_be211_name[];
 extern const char iwl_killer_bn1850w2_name[];
 extern const char iwl_killer_bn1850i_name[];
 extern const char iwl_bn201_name[];
-extern const char iwl_be221_name[];
+extern const char iwl_bn203_name[];
 extern const char iwl_be223_name[];
 extern const char iwl_ax221_name[];
 #if IS_ENABLED(CONFIG_IWLDVM)

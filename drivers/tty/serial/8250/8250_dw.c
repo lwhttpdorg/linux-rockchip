@@ -517,7 +517,7 @@ static int dw8250_clk_notifier_cb(struct notifier_block *nb,
 	 * deferred event handling complication.
 	 */
 	if (event == POST_RATE_CHANGE) {
-		queue_work(system_unbound_wq, &d->clk_work);
+		queue_work(system_dfl_wq, &d->clk_work);
 		return NOTIFY_OK;
 	}
 
@@ -809,6 +809,10 @@ static int dw8250_probe(struct platform_device *pdev)
 	if (err)
 		return err;
 
+	err = pm_runtime_set_active(dev);
+	if (err)
+		return dev_err_probe(dev, err, "Failed to set the runtime suspend as active\n");
+
 	data->uart_16550_compatible = device_property_read_bool(dev, "snps,uart-16550-compatible");
 
 	data->pdata = device_get_match_data(p->dev);
@@ -848,12 +852,11 @@ static int dw8250_probe(struct platform_device *pdev)
 		err = clk_notifier_register(data->clk, &data->clk_notifier);
 		if (err)
 			return dev_err_probe(dev, err, "Failed to set the clock notifier\n");
-		queue_work(system_unbound_wq, &data->clk_work);
+		queue_work(system_dfl_wq, &data->clk_work);
 	}
 
 	platform_set_drvdata(pdev, data);
 
-	pm_runtime_set_active(dev);
 	pm_runtime_enable(dev);
 
 	return 0;
@@ -925,10 +928,9 @@ static int dw8250_runtime_resume(struct device *dev)
 	return 0;
 }
 
-static const struct dev_pm_ops dw8250_pm_ops = {
-	SYSTEM_SLEEP_PM_OPS(dw8250_suspend, dw8250_resume)
-	RUNTIME_PM_OPS(dw8250_runtime_suspend, dw8250_runtime_resume, NULL)
-};
+static _DEFINE_DEV_PM_OPS(dw8250_pm_ops, dw8250_suspend, dw8250_resume,
+			  dw8250_runtime_suspend, dw8250_runtime_resume,
+			  NULL);
 
 static const struct dw8250_platform_data dw8250_dw_apb = {
 	.usr_reg = DW_UART_USR,

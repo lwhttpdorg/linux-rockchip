@@ -31,7 +31,7 @@
  * fprobe_table: hold 'fprobe_hlist::hlist' for checking the fprobe still
  *   exists. The key is the address of fprobe instance.
  * fprobe_ip_table: hold 'fprobe_hlist::array[*]' for searching the fprobe
- *   instance related to the funciton address. The key is the ftrace IP
+ *   instance related to the function address. The key is the ftrace IP
  *   address.
  *
  * When unregistering the fprobe, fprobe_hlist::fp and fprobe_hlist::array[*].fp
@@ -428,6 +428,7 @@ static int fprobe_fgraph_entry(struct ftrace_graph_ent *trace, struct fgraph_ops
 	if (WARN_ON_ONCE(!fregs))
 		return 0;
 
+	guard(rcu)();
 	head = rhltable_lookup(&fprobe_ip_table, &func, fprobe_rht_params);
 	reserved_words = 0;
 	rhl_for_each_entry_rcu(node, pos, head, hlist) {
@@ -798,7 +799,7 @@ static int fprobe_init(struct fprobe *fp, unsigned long *addrs, int num)
 		return -E2BIG;
 	fp->entry_data_size = size;
 
-	hlist_array = kzalloc(struct_size(hlist_array, array, num), GFP_KERNEL);
+	hlist_array = kzalloc_flex(*hlist_array, array, num);
 	if (!hlist_array)
 		return -ENOMEM;
 
@@ -853,7 +854,7 @@ int register_fprobe(struct fprobe *fp, const char *filter, const char *notfilter
 	if (!addrs)
 		return -ENOMEM;
 
-	mods = kcalloc(num, sizeof(*mods), GFP_KERNEL);
+	mods = kzalloc_objs(*mods, num);
 	if (!mods)
 		return -ENOMEM;
 
@@ -1041,4 +1042,4 @@ static int __init fprobe_initcall(void)
 	rhltable_init(&fprobe_ip_table, &fprobe_rht_params);
 	return 0;
 }
-late_initcall(fprobe_initcall);
+core_initcall(fprobe_initcall);

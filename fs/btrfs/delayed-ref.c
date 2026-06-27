@@ -228,7 +228,7 @@ int btrfs_delayed_refs_rsv_refill(struct btrfs_fs_info *fs_info,
 	if (!num_bytes)
 		return 0;
 
-	ret = btrfs_reserve_metadata_bytes(fs_info, space_info, num_bytes, flush);
+	ret = btrfs_reserve_metadata_bytes(space_info, num_bytes, flush);
 	if (ret)
 		return ret;
 
@@ -1027,7 +1027,7 @@ static int add_delayed_ref(struct btrfs_trans_handle *trans,
 	delayed_refs = &trans->transaction->delayed_refs;
 
 	if (btrfs_qgroup_full_accounting(fs_info) && !generic_ref->skip_qgroup) {
-		record = kzalloc(sizeof(*record), GFP_NOFS);
+		record = kzalloc_obj(*record, GFP_NOFS);
 		if (!record) {
 			ret = -ENOMEM;
 			goto free_head_ref;

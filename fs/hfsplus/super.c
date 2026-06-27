@@ -71,7 +71,7 @@ struct inode *hfsplus_iget(struct super_block *sb, unsigned long ino)
 	inode = iget_locked(sb, ino);
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
-	if (!(inode->i_state & I_NEW))
+	if (!(inode_state_read_once(inode) & I_NEW))
 		return inode;
 
 	atomic_set(&HFSPLUS_I(inode)->opencnt, 0);
@@ -654,7 +654,6 @@ out_free_vhdr:
 	kfree(sbi->s_vhdr_buf);
 	kfree(sbi->s_backup_vhdr_buf);
 out_unload_nls:
-	unload_nls(sbi->nls);
 	unload_nls(nls);
 	return err;
 }
@@ -701,7 +700,7 @@ static int hfsplus_init_fs_context(struct fs_context *fc)
 {
 	struct hfsplus_sb_info *sbi;
 
-	sbi = kzalloc(sizeof(struct hfsplus_sb_info), GFP_KERNEL);
+	sbi = kzalloc_obj(struct hfsplus_sb_info);
 	if (!sbi)
 		return -ENOMEM;
 

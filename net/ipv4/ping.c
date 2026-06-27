@@ -290,7 +290,7 @@ void ping_close(struct sock *sk, long timeout)
 }
 EXPORT_IPV6_MOD_GPL(ping_close);
 
-static int ping_pre_connect(struct sock *sk, struct sockaddr *uaddr,
+static int ping_pre_connect(struct sock *sk, struct sockaddr_unsized *uaddr,
 			    int addr_len)
 {
 	/* This check is replicated from __ip4_datagram_connect() and
@@ -305,7 +305,7 @@ static int ping_pre_connect(struct sock *sk, struct sockaddr *uaddr,
 
 /* Checks the bind address and possibly modifies sk->sk_bound_dev_if. */
 static int ping_check_bind_addr(struct sock *sk, struct inet_sock *isk,
-				struct sockaddr *uaddr, int addr_len)
+				struct sockaddr_unsized *uaddr, int addr_len)
 {
 	struct net *net = sock_net(sk);
 	if (sk->sk_family == AF_INET) {
@@ -391,7 +391,7 @@ static int ping_check_bind_addr(struct sock *sk, struct inet_sock *isk,
 	return 0;
 }
 
-static void ping_set_saddr(struct sock *sk, struct sockaddr *saddr)
+static void ping_set_saddr(struct sock *sk, struct sockaddr_unsized *saddr)
 {
 	if (saddr->sa_family == AF_INET) {
 		struct inet_sock *isk = inet_sk(sk);
@@ -413,7 +413,7 @@ static void ping_set_saddr(struct sock *sk, struct sockaddr *saddr)
  * Moreover, we don't allow binding to multi- and broadcast addresses.
  */
 
-int ping_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+int ping_bind(struct sock *sk, struct sockaddr_unsized *uaddr, int addr_len)
 {
 	struct inet_sock *isk = inet_sk(sk);
 	unsigned short snum;
@@ -696,6 +696,8 @@ EXPORT_IPV6_MOD_GPL(ping_common_sendmsg);
 
 static int ping_v4_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 {
+	DEFINE_RAW_FLEX(struct ip_options_rcu, opt_copy, opt.__data,
+			IP_OPTIONS_DATA_FIXED_SIZE);
 	struct net *net = sock_net(sk);
 	struct flowi4 fl4;
 	struct inet_sock *inet = inet_sk(sk);
@@ -703,7 +705,6 @@ static int ping_v4_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	struct icmphdr user_icmph;
 	struct pingfakehdr pfh;
 	struct rtable *rt = NULL;
-	struct ip_options_data opt_copy;
 	int free = 0;
 	__be32 saddr, daddr, faddr;
 	u8 scope;
@@ -752,9 +753,9 @@ static int ping_v4_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 		rcu_read_lock();
 		inet_opt = rcu_dereference(inet->inet_opt);
 		if (inet_opt) {
-			memcpy(&opt_copy, inet_opt,
+			memcpy(opt_copy, inet_opt,
 			       sizeof(*inet_opt) + inet_opt->opt.optlen);
-			ipc.opt = &opt_copy.opt;
+			ipc.opt = opt_copy;
 		}
 		rcu_read_unlock();
 	}

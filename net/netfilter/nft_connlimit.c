@@ -44,7 +44,7 @@ static inline void nft_connlimit_do_eval(struct nft_connlimit *priv,
 
 	count = READ_ONCE(priv->list->count);
 
-	if ((count > priv->limit) ^ priv->invert) {
+	if ((count > READ_ONCE(priv->limit)) ^ READ_ONCE(priv->invert)) {
 		regs->verdict.code = NFT_BREAK;
 		return;
 	}
@@ -71,7 +71,7 @@ static int nft_connlimit_do_init(const struct nft_ctx *ctx,
 			invert = true;
 	}
 
-	priv->list = kmalloc(sizeof(*priv->list), GFP_KERNEL_ACCOUNT);
+	priv->list = kmalloc_obj(*priv->list, GFP_KERNEL_ACCOUNT);
 	if (!priv->list)
 		return -ENOMEM;
 
@@ -131,6 +131,16 @@ static int nft_connlimit_obj_init(const struct nft_ctx *ctx,
 	return nft_connlimit_do_init(ctx, tb, priv);
 }
 
+static void nft_connlimit_obj_update(struct nft_object *obj,
+				     struct nft_object *newobj)
+{
+	struct nft_connlimit *newpriv = nft_obj_data(newobj);
+	struct nft_connlimit *priv = nft_obj_data(obj);
+
+	WRITE_ONCE(priv->limit, newpriv->limit);
+	WRITE_ONCE(priv->invert, newpriv->invert);
+}
+
 static void nft_connlimit_obj_destroy(const struct nft_ctx *ctx,
 				      struct nft_object *obj)
 {
@@ -160,6 +170,7 @@ static const struct nft_object_ops nft_connlimit_obj_ops = {
 	.init		= nft_connlimit_obj_init,
 	.destroy	= nft_connlimit_obj_destroy,
 	.dump		= nft_connlimit_obj_dump,
+	.update		= nft_connlimit_obj_update,
 };
 
 static struct nft_object_type nft_connlimit_obj_type __read_mostly = {
@@ -209,7 +220,7 @@ static int nft_connlimit_clone(struct nft_expr *dst, const struct nft_expr *src,
 	struct nft_connlimit *priv_dst = nft_expr_priv(dst);
 	struct nft_connlimit *priv_src = nft_expr_priv(src);
 
-	priv_dst->list = kmalloc(sizeof(*priv_dst->list), gfp);
+	priv_dst->list = kmalloc_obj(*priv_dst->list, gfp);
 	if (!priv_dst->list)
 		return -ENOMEM;
 

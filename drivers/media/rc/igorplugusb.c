@@ -164,7 +164,7 @@ static int igorplugusb_probe(struct usb_interface *intf,
 	if (!ir)
 		return -ENOMEM;
 
-	ir->request = kzalloc(sizeof(*ir->request), GFP_KERNEL);
+	ir->request = kzalloc_obj(*ir->request, GFP_KERNEL);
 	if (!ir->request)
 		goto fail;
 
@@ -247,7 +247,6 @@ static void igorplugusb_disconnect(struct usb_interface *intf)
 	usb_set_intfdata(intf, NULL);
 	usb_unpoison_urb(ir->urb);
 	usb_free_urb(ir->urb);
-	rc_free_device(ir->rc);
 	kfree(ir->buf_in);
 	kfree(ir->request);
 }

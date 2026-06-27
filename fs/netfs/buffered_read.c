@@ -168,7 +168,8 @@ void netfs_queue_read(struct netfs_io_request *rreq,
 	 * remove entries off of the front.
 	 */
 	spin_lock(&rreq->lock);
-	list_add_tail(&subreq->rreq_link, &stream->subrequests);
+	/* Write IN_PROGRESS before pointer to new subreq */
+	list_add_tail_release(&subreq->rreq_link, &stream->subrequests);
 	if (list_is_first(&subreq->rreq_link, &stream->subrequests)) {
 		if (!stream->active) {
 			stream->collected_to = subreq->start;
@@ -208,7 +209,6 @@ static void netfs_issue_read(struct netfs_io_request *rreq,
 static void netfs_read_to_pagecache(struct netfs_io_request *rreq,
 				    struct readahead_control *ractl)
 {
-	struct netfs_inode *ictx = netfs_inode(rreq->inode);
 	unsigned long long start = rreq->start;
 	ssize_t size = rreq->len;
 	int ret = 0;
@@ -232,7 +232,8 @@ static void netfs_read_to_pagecache(struct netfs_io_request *rreq,
 		source = netfs_cache_prepare_read(rreq, subreq, rreq->i_size);
 		subreq->source = source;
 		if (source == NETFS_DOWNLOAD_FROM_SERVER) {
-			unsigned long long zp = umin(ictx->zero_point, rreq->i_size);
+			unsigned long long zero_point = netfs_read_zero_point(rreq->inode);
+			unsigned long long zp = umin(zero_point, rreq->i_size);
 			size_t len = subreq->len;
 
 			if (unlikely(rreq->origin == NETFS_READ_SINGLE))
@@ -248,7 +249,7 @@ static void netfs_read_to_pagecache(struct netfs_io_request *rreq,
 				pr_err("ZERO-LEN READ: R=%08x[%x] l=%zx/%zx s=%llx z=%llx i=%llx",
 				       rreq->debug_id, subreq->debug_index,
 				       subreq->len, size,
-				       subreq->start, ictx->zero_point, rreq->i_size);
+				       subreq->start, zero_point, rreq->i_size);
 				netfs_cancel_read(subreq, ret);
 				break;
 			}
@@ -426,7 +427,7 @@ static int netfs_read_gaps(struct file *file, struct folio *folio)
 	 * end get copied to, but the middle is discarded.
 	 */
 	ret = -ENOMEM;
-	bvec = kmalloc_array(nr_bvec, sizeof(*bvec), GFP_KERNEL);
+	bvec = kmalloc_objs(*bvec, nr_bvec);
 	if (!bvec)
 		goto discard;
 

@@ -41,6 +41,7 @@
 *.o.*
 *.patch
 *.pyc
+*.rlib
 *.rmeta
 *.rpm
 *.rsi
@@ -183,6 +184,3 @@ sphinx_*/
 
 # Rust analyzer configuration
 /rust-project.json
-
-# linux-firmware
-linux-firmware/

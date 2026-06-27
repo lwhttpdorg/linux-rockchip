@@ -1294,8 +1294,10 @@ fail:
 		 * within [128, 2048] range.
 		 */
 		if (!op_data3.ld_op || !op_data3.dc_miss ||
-		    op_data3.dc_miss_lat <= (event->attr.config1 & 0xFFF))
+		    op_data3.dc_miss_lat <= (event->attr.config1 & 0xFFF)) {
+			throttle = perf_event_account_interrupt(event);
 			goto out;
+		}
 	}
 
 	/*
@@ -1327,8 +1329,10 @@ fail:
 		regs.flags &= ~PERF_EFLAGS_EXACT;
 	} else {
 		/* Workaround for erratum #1197 */
-		if (perf_ibs->fetch_ignore_if_zero_rip && !(ibs_data.regs[1]))
+		if (perf_ibs->fetch_ignore_if_zero_rip && !(ibs_data.regs[1])) {
+			throttle = perf_event_account_interrupt(event);
 			goto out;
+		}
 
 		set_linear_ip(&regs, ibs_data.regs[1]);
 		regs.flags |= PERF_EFLAGS_EXACT;
@@ -1719,26 +1723,30 @@ static int x86_pmu_amd_ibs_starting_cpu(unsigned int cpu)
 
 #ifdef CONFIG_PM
 
-static int perf_ibs_suspend(void)
+static int perf_ibs_suspend(void *data)
 {
 	clear_APIC_ibs();
 	return 0;
 }
 
-static void perf_ibs_resume(void)
+static void perf_ibs_resume(void *data)
 {
 	ibs_eilvt_setup();
 	setup_APIC_ibs();
 }
 
-static struct syscore_ops perf_ibs_syscore_ops = {
+static const struct syscore_ops perf_ibs_syscore_ops = {
 	.resume		= perf_ibs_resume,
 	.suspend	= perf_ibs_suspend,
 };
 
+static struct syscore perf_ibs_syscore = {
+	.ops = &perf_ibs_syscore_ops,
+};
+
 static void perf_ibs_pm_init(void)
 {
-	register_syscore_ops(&perf_ibs_syscore_ops);
+	register_syscore(&perf_ibs_syscore);
 }
 
 #else

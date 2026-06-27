@@ -403,7 +403,7 @@ static acpi_status acpi_gpiochip_alloc_event(struct acpi_resource *ares,
 		goto fail_unlock_irq;
 	}
 
-	event = kzalloc(sizeof(*event), GFP_KERNEL);
+	event = kzalloc_obj(*event);
 	if (!event)
 		goto fail_unlock_irq;
 
@@ -1099,7 +1099,7 @@ acpi_gpio_adr_space_handler(u32 function, acpi_physical_address address,
 		return AE_BAD_PARAMETER;
 	}
 
-	length = min_t(u16, agpio->pin_table_length, pin_index + bits);
+	length = min(agpio->pin_table_length, pin_index + bits);
 	for (i = pin_index; i < length; ++i) {
 		unsigned int pin = agpio->pin_table[i];
 		struct acpi_gpio_connection *conn;
@@ -1144,7 +1144,7 @@ acpi_gpio_adr_space_handler(u32 function, acpi_physical_address address,
 				goto out;
 			}
 
-			conn = kzalloc(sizeof(*conn), GFP_KERNEL);
+			conn = kzalloc_obj(*conn);
 			if (!conn) {
 				gpiochip_free_own_desc(desc);
 				mutex_unlock(&achip->conn_lock);
@@ -1302,7 +1302,7 @@ void acpi_gpiochip_add(struct gpio_chip *chip)
 	if (!adev)
 		return;
 
-	acpi_gpio = kzalloc(sizeof(*acpi_gpio), GFP_KERNEL);
+	acpi_gpio = kzalloc_obj(*acpi_gpio);
 	if (!acpi_gpio) {
 		dev_err(chip->parent,
 			"Failed to allocate memory for ACPI GPIO chip\n");

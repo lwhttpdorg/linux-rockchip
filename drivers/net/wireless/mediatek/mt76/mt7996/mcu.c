@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: ISC
+// SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
  * Copyright (C) 2022 MediaTek Inc.
  */
@@ -317,6 +317,9 @@ mt7996_mcu_send_message(struct mt76_dev *mdev, struct sk_buff *skb,
 			uni_txd->option = MCU_CMD_UNI_QUERY_ACK;
 		else
 			uni_txd->option = MCU_CMD_UNI_EXT_ACK;
+
+		if (mcu_cmd == MCU_UNI_CMD_SDO)
+			uni_txd->option &= ~MCU_CMD_ACK;
 
 		if ((cmd & __MCU_CMD_FIELD_WA) && (cmd & __MCU_CMD_FIELD_WM))
 			uni_txd->s2d_index = MCU_S2D_H2CN;
@@ -731,7 +734,7 @@ mt7996_mcu_wed_rro_event(struct mt7996_dev *dev, struct sk_buff *skb)
 			struct mt7996_wed_rro_session_id *session;
 
 			e = (void *)skb->data;
-			session = kzalloc(sizeof(*session), GFP_ATOMIC);
+			session = kzalloc_obj(*session, GFP_ATOMIC);
 			if (!session)
 				break;
 

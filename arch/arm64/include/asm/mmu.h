@@ -12,7 +12,7 @@
 #define USER_ASID_FLAG	(UL(1) << USER_ASID_BIT)
 #define TTBR_ASID_MASK	(UL(0xffff) << 48)
 
-#ifndef __ASSEMBLY__
+#ifndef __ASSEMBLER__
 
 #include <linux/refcount.h>
 #include <asm/cpufeature.h>
@@ -114,5 +114,5 @@ static inline void kpti_install_ng_mappings(void) {}
 
 extern bool page_alloc_available;
 
-#endif	/* !__ASSEMBLY__ */
+#endif	/* !__ASSEMBLER__ */
 #endif

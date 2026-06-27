@@ -25,6 +25,7 @@
 #include <net/tcp.h>
 #include <net/vxlan.h>
 #include <net/geneve.h>
+#include <net/netdev_queues.h>
 
 #include "hnae3.h"
 #include "hns3_enet.h"
@@ -2426,6 +2427,35 @@ static int hns3_nic_do_ioctl(struct net_device *netdev,
 	return h->ae_algo->ops->do_ioctl(h, ifr, cmd);
 }
 
+static int hns3_nic_hwtstamp_get(struct net_device *netdev,
+				 struct kernel_hwtstamp_config *config)
+{
+	struct hnae3_handle *h = hns3_get_handle(netdev);
+
+	if (!netif_running(netdev))
+		return -EINVAL;
+
+	if (!h->ae_algo->ops->hwtstamp_get)
+		return -EOPNOTSUPP;
+
+	return h->ae_algo->ops->hwtstamp_get(h, config);
+}
+
+static int hns3_nic_hwtstamp_set(struct net_device *netdev,
+				 struct kernel_hwtstamp_config *config,
+				 struct netlink_ext_ack *extack)
+{
+	struct hnae3_handle *h = hns3_get_handle(netdev);
+
+	if (!netif_running(netdev))
+		return -EINVAL;
+
+	if (!h->ae_algo->ops->hwtstamp_set)
+		return -EOPNOTSUPP;
+
+	return h->ae_algo->ops->hwtstamp_set(h, config, extack);
+}
+
 static int hns3_nic_set_features(struct net_device *netdev,
 				 netdev_features_t features)
 {
@@ -2788,14 +2818,12 @@ static int hns3_get_timeout_queue(struct net_device *ndev)
 
 	/* Find the stopped queue the same way the stack does */
 	for (i = 0; i < ndev->num_tx_queues; i++) {
+		unsigned int timedout_ms;
 		struct netdev_queue *q;
-		unsigned long trans_start;
 
 		q = netdev_get_tx_queue(ndev, i);
-		trans_start = READ_ONCE(q->trans_start);
-		if (netif_xmit_stopped(q) &&
-		    time_after(jiffies,
-			       (trans_start + ndev->watchdog_timeo))) {
+		timedout_ms = netif_xmit_timeout_ms(q);
+		if (timedout_ms) {
 #ifdef CONFIG_BQL
 			struct dql *dql = &q->dql;
 
@@ -2804,8 +2832,7 @@ static int hns3_get_timeout_queue(struct net_device *ndev)
 				    dql->adj_limit, dql->num_completed);
 #endif
 			netdev_info(ndev, "queue state: 0x%lx, delta msecs: %u\n",
-				    q->state,
-				    jiffies_to_msecs(jiffies - trans_start));
+				    q->state, timedout_ms);
 			break;
 		}
 	}
@@ -3058,6 +3085,8 @@ static const struct net_device_ops hns3_nic_netdev_ops = {
 	.ndo_set_vf_rate	= hns3_nic_set_vf_rate,
 	.ndo_set_vf_mac		= hns3_nic_set_vf_mac,
 	.ndo_select_queue	= hns3_nic_select_queue,
+	.ndo_hwtstamp_get	= hns3_nic_hwtstamp_get,
+	.ndo_hwtstamp_set	= hns3_nic_hwtstamp_set,
 };
 
 bool hns3_is_phys_func(struct pci_dev *pdev)

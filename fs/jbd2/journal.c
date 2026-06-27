@@ -937,8 +937,8 @@ int jbd2_journal_bmap(journal_t *journal, unsigned long blocknr,
 			printk(KERN_ALERT "%s: journal block not found "
 					"at offset %lu on %s\n",
 			       __func__, blocknr, journal->j_devname);
+			jbd2_journal_abort(journal, ret ? ret : -EFSCORRUPTED);
 			err = -EIO;
-			jbd2_journal_abort(journal, err);
 		} else {
 			*retp = block;
 		}
@@ -1175,7 +1175,7 @@ static int jbd2_seq_info_open(struct inode *inode, struct file *file)
 	struct jbd2_stats_proc_session *s;
 	int rc, size;
 
-	s = kmalloc(sizeof(*s), GFP_KERNEL);
+	s = kmalloc_obj(*s);
 	if (s == NULL)
 		return -ENOMEM;
 	size = sizeof(struct transaction_stats_s);
@@ -1525,7 +1525,7 @@ static journal_t *journal_init_common(struct block_device *bdev,
 	int err;
 	int n;
 
-	journal = kzalloc(sizeof(*journal), GFP_KERNEL);
+	journal = kzalloc_obj(*journal);
 	if (!journal)
 		return ERR_PTR(-ENOMEM);
 
@@ -1578,8 +1578,7 @@ static journal_t *journal_init_common(struct block_device *bdev,
 	n = journal->j_blocksize / jbd2_min_tag_size();
 	journal->j_wbufsize = n;
 	journal->j_fc_wbuf = NULL;
-	journal->j_wbuf = kmalloc_array(n, sizeof(struct buffer_head *),
-					GFP_KERNEL);
+	journal->j_wbuf = kmalloc_objs(struct buffer_head *, n);
 	if (!journal->j_wbuf)
 		goto err_cleanup;
 
@@ -1859,8 +1858,9 @@ int jbd2_journal_update_sb_log_tail(journal_t *journal, tid_t tail_tid,
 
 	if (is_journal_aborted(journal))
 		return -EIO;
-	if (jbd2_check_fs_dev_write_error(journal)) {
-		jbd2_journal_abort(journal, -EIO);
+	ret = jbd2_check_fs_dev_write_error(journal);
+	if (ret) {
+		jbd2_journal_abort(journal, ret);
 		return -EIO;
 	}
 
@@ -2157,9 +2157,11 @@ int jbd2_journal_destroy(journal_t *journal)
 	 * failed to write back to the original location, otherwise the
 	 * filesystem may become inconsistent.
 	 */
-	if (!is_journal_aborted(journal) &&
-	    jbd2_check_fs_dev_write_error(journal))
-		jbd2_journal_abort(journal, -EIO);
+	if (!is_journal_aborted(journal)) {
+		int ret = jbd2_check_fs_dev_write_error(journal);
+		if (ret)
+			jbd2_journal_abort(journal, ret);
+	}
 
 	if (journal->j_sb_buffer) {
 		if (!is_journal_aborted(journal)) {
@@ -2266,8 +2268,7 @@ jbd2_journal_initialize_fast_commit(journal_t *journal)
 
 	/* Are we called twice? */
 	WARN_ON(journal->j_fc_wbuf != NULL);
-	journal->j_fc_wbuf = kmalloc_array(num_fc_blks,
-				sizeof(struct buffer_head *), GFP_KERNEL);
+	journal->j_fc_wbuf = kmalloc_objs(struct buffer_head *, num_fc_blks);
 	if (!journal->j_fc_wbuf)
 		return -ENOMEM;
 

@@ -186,7 +186,7 @@ static struct extent_map *btrfs_new_extent_direct(struct btrfs_inode *inode,
 	alloc_hint = btrfs_get_extent_allocation_hint(inode, start, len);
 again:
 	ret = btrfs_reserve_extent(root, len, len, fs_info->sectorsize,
-				   0, alloc_hint, &ins, 1, 1);
+				   0, alloc_hint, &ins, true, true);
 	if (ret == -EAGAIN) {
 		ASSERT(btrfs_is_zoned(fs_info));
 		wait_on_bit_io(&inode->root->fs_info->flags, BTRFS_FS_NEED_ZONE_FINISH,
@@ -387,7 +387,7 @@ static int btrfs_dio_iomap_begin(struct inode *inode, loff_t start,
 	 * to allocate a contiguous array for the checksums.
 	 */
 	if (!write)
-		len = min_t(u64, len, fs_info->sectorsize * BTRFS_MAX_BIO_SECTORS);
+		len = min_t(u64, len, fs_info->sectorsize * BIO_MAX_VECS);
 
 	lockstart = start;
 	lockend = start + len - 1;
@@ -763,7 +763,7 @@ static ssize_t btrfs_dio_read(struct kiocb *iocb, struct iov_iter *iter,
 	struct btrfs_dio_data data = { 0 };
 
 	return iomap_dio_rw(iocb, iter, &btrfs_dio_iomap_ops, &btrfs_dio_ops,
-			    IOMAP_DIO_PARTIAL, &data, done_before);
+			    IOMAP_DIO_PARTIAL | IOMAP_DIO_FSBLOCK_ALIGNED, &data, done_before);
 }
 
 static struct iomap_dio *btrfs_dio_write(struct kiocb *iocb, struct iov_iter *iter,
@@ -772,7 +772,7 @@ static struct iomap_dio *btrfs_dio_write(struct kiocb *iocb, struct iov_iter *it
 	struct btrfs_dio_data data = { 0 };
 
 	return __iomap_dio_rw(iocb, iter, &btrfs_dio_iomap_ops, &btrfs_dio_ops,
-			    IOMAP_DIO_PARTIAL, &data, done_before);
+			    IOMAP_DIO_PARTIAL | IOMAP_DIO_FSBLOCK_ALIGNED, &data, done_before);
 }
 
 static ssize_t check_direct_IO(struct btrfs_fs_info *fs_info,
@@ -785,19 +785,6 @@ static ssize_t check_direct_IO(struct btrfs_fs_info *fs_info,
 
 	if (iov_iter_alignment(iter) & blocksize_mask)
 		return -EINVAL;
-
-	/*
-	 * For bs > ps support, we heavily rely on large folios to make sure no
-	 * block will cross large folio boundaries.
-	 *
-	 * But memory provided by direct IO is only virtually contiguous, not
-	 * physically contiguous, and will break the btrfs' large folio requirement.
-	 *
-	 * So for bs > ps support, all direct IOs should fallback to buffered ones.
-	 */
-	if (fs_info->sectorsize > PAGE_SIZE)
-		return -EINVAL;
-
 	return 0;
 }
 

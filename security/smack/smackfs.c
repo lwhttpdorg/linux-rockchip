@@ -682,7 +682,7 @@ smk_cipso_doi(u32 ndoi, gfp_t gfp_flags)
 
 	smk_netlabel_audit_set(&nai);
 
-	doip = kmalloc(sizeof(struct cipso_v4_doi), gfp_flags);
+	doip = kmalloc_obj(struct cipso_v4_doi, gfp_flags);
 	if (!doip) {
 		rc = -ENOMEM;
 		goto clr_doi_lock;
@@ -1249,7 +1249,7 @@ static ssize_t smk_write_net4addr(struct file *file, const char __user *buf,
 	smk_netlabel_audit_set(&audit_info);
 
 	if (found == 0) {
-		snp = kzalloc(sizeof(*snp), GFP_KERNEL);
+		snp = kzalloc_obj(*snp);
 		if (snp == NULL)
 			rc = -ENOMEM;
 		else {
@@ -1526,7 +1526,7 @@ static ssize_t smk_write_net6addr(struct file *file, const char __user *buf,
 			break;
 	}
 	if (found == 0) {
-		snp = kzalloc(sizeof(*snp), GFP_KERNEL);
+		snp = kzalloc_obj(*snp);
 		if (snp == NULL)
 			rc = -ENOMEM;
 		else {
@@ -1970,7 +1970,7 @@ static int smk_parse_label_list(char *data, struct list_head *list)
 		if (IS_ERR(skp))
 			return PTR_ERR(skp);
 
-		sklep = kzalloc(sizeof(*sklep), GFP_KERNEL);
+		sklep = kzalloc_obj(*sklep);
 		if (sklep == NULL)
 			return -ENOMEM;
 
@@ -2977,7 +2977,7 @@ static int smk_init_fs_context(struct fs_context *fc)
 static struct file_system_type smk_fs_type = {
 	.name		= "smackfs",
 	.init_fs_context = smk_init_fs_context,
-	.kill_sb	= kill_litter_super,
+	.kill_sb	= kill_anon_super,
 };
 
 static struct vfsmount *smackfs_mount;
@@ -2995,7 +2995,7 @@ static struct vfsmount *smackfs_mount;
  * Returns true if we were not chosen on boot or if
  * we were chosen and filesystem registration succeeded.
  */
-static int __init init_smk_fs(void)
+int __init init_smk_fs(void)
 {
 	int err;
 	int rc;
@@ -3042,5 +3042,3 @@ static int __init init_smk_fs(void)
 
 	return err;
 }
-
-__initcall(init_smk_fs);

@@ -1209,7 +1209,7 @@ static int digi_port_init(struct usb_serial_port *port, unsigned port_num)
 {
 	struct digi_port *priv;
 
-	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+	priv = kzalloc_obj(*priv);
 	if (!priv)
 		return -ENOMEM;
 
@@ -1250,7 +1250,7 @@ static int digi_startup(struct usb_serial *serial)
 	if (serial->port[oob_port_num]->bulk_out_size < 8)
 		return -EINVAL;
 
-	serial_priv = kzalloc(sizeof(*serial_priv), GFP_KERNEL);
+	serial_priv = kzalloc_obj(*serial_priv);
 	if (!serial_priv)
 		return -ENOMEM;
 

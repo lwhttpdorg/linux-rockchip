@@ -102,7 +102,7 @@ static int hugetlbfs_file_mmap(struct file *file, struct vm_area_struct *vma)
 	loff_t len, vma_len;
 	int ret;
 	struct hstate *h = hstate_file(file);
-	vm_flags_t vm_flags;
+	vma_flags_t vma_flags;
 
 	/*
 	 * vma address alignment (but not the pgoff alignment) has
@@ -112,7 +112,7 @@ static int hugetlbfs_file_mmap(struct file *file, struct vm_area_struct *vma)
 	 * way when do_mmap unwinds (may be important on powerpc
 	 * and ia64).
 	 */
-	vm_flags_set(vma, VM_HUGETLB | VM_DONTEXPAND);
+	vma_set_flags(vma, VMA_HUGETLB_BIT, VMA_DONTEXPAND_BIT);
 	vma->vm_ops = &hugetlb_vm_ops;
 
 	/*
@@ -141,23 +141,23 @@ static int hugetlbfs_file_mmap(struct file *file, struct vm_area_struct *vma)
 
 	ret = -ENOMEM;
 
-	vm_flags = vma->vm_flags;
+	vma_flags = vma->flags;
 	/*
 	 * for SHM_HUGETLB, the pages are reserved in the shmget() call so skip
 	 * reserving here. Note: only for SHM hugetlbfs file, the inode
 	 * flag S_PRIVATE is set.
 	 */
 	if (inode->i_flags & S_PRIVATE)
-		vm_flags |= VM_NORESERVE;
+		vma_flags_set(&vma_flags, VMA_NORESERVE_BIT);
 
 	if (hugetlb_reserve_pages(inode,
 				vma->vm_pgoff >> huge_page_order(h),
 				len >> huge_page_shift(h), vma,
-				vm_flags) < 0)
+				vma_flags) < 0)
 		goto out;
 
 	ret = 0;
-	if (vma->vm_flags & VM_WRITE && inode->i_size < len)
+	if (vma_flags_test(&vma->flags, VMA_WRITE_BIT) && inode->i_size < len)
 		i_size_write(inode, len);
 out:
 	inode_unlock(inode);
@@ -184,8 +184,7 @@ hugetlb_get_unmapped_area(struct file *file, unsigned long addr,
 	if (addr)
 		addr0 = ALIGN(addr, huge_page_size(h));
 
-	return mm_get_unmapped_area_vmflags(current->mm, file, addr0, len, pgoff,
-					    flags, 0);
+	return mm_get_unmapped_area_vmflags(file, addr0, len, pgoff, flags, 0);
 }
 
 /*
@@ -975,8 +974,7 @@ static int hugetlbfs_mknod(struct mnt_idmap *idmap, struct inode *dir,
 	if (!inode)
 		return -ENOSPC;
 	inode_set_mtime_to_ts(dir, inode_set_ctime_current(dir));
-	d_instantiate(dentry, inode);
-	dget(dentry);/* Extra count - pin the dentry in core */
+	d_make_persistent(dentry, inode);
 	return 0;
 }
 
@@ -1023,10 +1021,9 @@ static int hugetlbfs_symlink(struct mnt_idmap *idmap,
 	if (inode) {
 		int l = strlen(symname)+1;
 		error = page_symlink(inode, symname, l);
-		if (!error) {
-			d_instantiate(dentry, inode);
-			dget(dentry);
-		} else
+		if (!error)
+			d_make_persistent(dentry, inode);
+		else
 			iput(inode);
 	}
 	inode_set_mtime_to_ts(dir, inode_set_ctime_current(dir));
@@ -1390,7 +1387,7 @@ hugetlbfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	struct hugetlbfs_fs_context *ctx = fc->fs_private;
 	struct hugetlbfs_sb_info *sbinfo;
 
-	sbinfo = kmalloc(sizeof(struct hugetlbfs_sb_info), GFP_KERNEL);
+	sbinfo = kmalloc_obj(struct hugetlbfs_sb_info);
 	if (!sbinfo)
 		return -ENOMEM;
 	sb->s_fs_info = sbinfo;
@@ -1461,7 +1458,7 @@ static int hugetlbfs_init_fs_context(struct fs_context *fc)
 {
 	struct hugetlbfs_fs_context *ctx;
 
-	ctx = kzalloc(sizeof(struct hugetlbfs_fs_context), GFP_KERNEL);
+	ctx = kzalloc_obj(struct hugetlbfs_fs_context);
 	if (!ctx)
 		return -ENOMEM;
 
@@ -1483,7 +1480,7 @@ static struct file_system_type hugetlbfs_fs_type = {
 	.name			= "hugetlbfs",
 	.init_fs_context	= hugetlbfs_init_fs_context,
 	.parameters		= hugetlb_fs_parameters,
-	.kill_sb		= kill_litter_super,
+	.kill_sb		= kill_anon_super,
 	.fs_flags               = FS_ALLOW_IDMAP,
 };
 
@@ -1510,7 +1507,7 @@ static int get_hstate_idx(int page_size_log)
  * otherwise hugetlb_reserve_pages reserves one less hugepages than intended.
  */
 struct file *hugetlb_file_setup(const char *name, size_t size,
-				vm_flags_t acctflag, int creat_flags,
+				vma_flags_t acctflag, int creat_flags,
 				int page_size_log)
 {
 	struct inode *inode;

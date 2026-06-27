@@ -213,7 +213,7 @@ static int xbox_remote_probe(struct usb_interface *interface,
 		return -ENODEV;
 	}
 
-	xbox_remote = kzalloc(sizeof(*xbox_remote), GFP_KERNEL);
+	xbox_remote = kzalloc_obj(*xbox_remote);
 	rc_dev = rc_allocate_device(RC_DRIVER_SCANCODE);
 	if (!xbox_remote || !rc_dev)
 		goto exit_free_dev_rdev;
@@ -283,15 +283,14 @@ static void xbox_remote_disconnect(struct usb_interface *interface)
 	struct xbox_remote *xbox_remote;
 
 	xbox_remote = usb_get_intfdata(interface);
+	usb_set_intfdata(interface, NULL);
 	if (!xbox_remote) {
 		dev_warn(&interface->dev, "%s - null device?\n", __func__);
 		return;
 	}
 
-	rc_unregister_device(xbox_remote->rdev);
-	usb_set_intfdata(interface, NULL);
 	usb_kill_urb(xbox_remote->irq_urb);
-	rc_free_device(xbox_remote->rdev);
+	rc_unregister_device(xbox_remote->rdev);
 	usb_free_urb(xbox_remote->irq_urb);
 	kfree(xbox_remote->inbuf);
 	kfree(xbox_remote);

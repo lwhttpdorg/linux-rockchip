@@ -1715,7 +1715,7 @@ static int mceusb_dev_probe(struct usb_interface *intf,
 		pipe = usb_rcvbulkpipe(dev, ep_in->bEndpointAddress);
 	maxp = usb_maxpacket(dev, pipe);
 
-	ir = kzalloc(sizeof(struct mceusb_dev), GFP_KERNEL);
+	ir = kzalloc_obj(struct mceusb_dev);
 	if (!ir)
 		goto mem_alloc_fail;
 
@@ -1850,7 +1850,6 @@ static void mceusb_dev_disconnect(struct usb_interface *intf)
 	usb_free_urb(ir->urb_in);
 	usb_free_coherent(dev, ir->len_in, ir->buf_in, ir->dma_in);
 	usb_put_dev(dev);
-	rc_free_device(ir->rc);
 
 	kfree(ir);
 }

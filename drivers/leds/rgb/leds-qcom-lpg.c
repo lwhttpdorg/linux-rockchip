@@ -996,7 +996,7 @@ static int lpg_pattern_set(struct lpg_led *led, struct led_pattern *led_pattern,
 	if (len % 2)
 		return -EINVAL;
 
-	pattern = kcalloc(len / 2, sizeof(*pattern), GFP_KERNEL);
+	pattern = kzalloc_objs(*pattern, len / 2);
 	if (!pattern)
 		return -ENOMEM;
 
@@ -1387,7 +1387,7 @@ static int lpg_add_led(struct lpg *lpg, struct device_node *np)
 		return dev_err_probe(lpg->dev, ret,
 			      "failed to parse \"color\" of %pOF\n", np);
 
-	if (color == LED_COLOR_ID_RGB)
+	if (color == LED_COLOR_ID_RGB || color == LED_COLOR_ID_MULTI)
 		num_channels = of_get_available_child_count(np);
 	else
 		num_channels = 1;
@@ -1399,7 +1399,7 @@ static int lpg_add_led(struct lpg *lpg, struct device_node *np)
 	led->lpg = lpg;
 	led->num_channels = num_channels;
 
-	if (color == LED_COLOR_ID_RGB) {
+	if (color == LED_COLOR_ID_RGB || color == LED_COLOR_ID_MULTI) {
 		info = devm_kcalloc(lpg->dev, num_channels, sizeof(*info), GFP_KERNEL);
 		if (!info)
 			return -ENOMEM;
@@ -1459,7 +1459,7 @@ static int lpg_add_led(struct lpg *lpg, struct device_node *np)
 
 	init_data.fwnode = of_fwnode_handle(np);
 
-	if (color == LED_COLOR_ID_RGB)
+	if (color == LED_COLOR_ID_RGB || color == LED_COLOR_ID_MULTI)
 		ret = devm_led_classdev_multicolor_register_ext(lpg->dev, &led->mcdev, &init_data);
 	else
 		ret = devm_led_classdev_register_ext(lpg->dev, &led->cdev, &init_data);

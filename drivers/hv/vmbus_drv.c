@@ -30,13 +30,14 @@
 #include <linux/delay.h>
 #include <linux/panic_notifier.h>
 #include <linux/ptrace.h>
-#include <linux/screen_info.h>
+#include <linux/sysfb.h>
 #include <linux/efi.h>
 #include <linux/random.h>
 #include <linux/kernel.h>
 #include <linux/syscore_ops.h>
 #include <linux/dma-map-ops.h>
 #include <linux/pci.h>
+#include <linux/export.h>
 #include <clocksource/hyperv_timer.h>
 #include <asm/mshyperv.h>
 #include "hyperv_vmbus.h"
@@ -51,7 +52,7 @@ static struct device  *vmbus_root_device;
 
 static int hyperv_cpuhp_online;
 
-static long __percpu *vmbus_evt;
+static DEFINE_PER_CPU(long, vmbus_evt);
 
 /* Values parsed from ACPI DSDT */
 int vmbus_irq;
@@ -765,7 +766,7 @@ static int vmbus_add_dynid(struct hv_driver *drv, guid_t *guid)
 {
 	struct vmbus_dynid *dynid;
 
-	dynid = kzalloc(sizeof(*dynid), GFP_KERNEL);
+	dynid = kzalloc_obj(*dynid);
 	if (!dynid)
 		return -ENOMEM;
 
@@ -1068,18 +1069,19 @@ static void vmbus_onmessage_work(struct work_struct *work)
 	kfree(ctx);
 }
 
-void vmbus_on_msg_dpc(unsigned long data)
+static void __vmbus_on_msg_dpc(void *message_page_addr)
 {
-	struct hv_per_cpu_context *hv_cpu = (void *)data;
-	void *page_addr = hv_cpu->synic_message_page;
-	struct hv_message msg_copy, *msg = (struct hv_message *)page_addr +
-				  VMBUS_MESSAGE_SINT;
+	struct hv_message msg_copy, *msg;
 	struct vmbus_channel_message_header *hdr;
 	enum vmbus_channel_message_type msgtype;
 	const struct vmbus_channel_message_table_entry *entry;
 	struct onmessage_work_context *ctx;
 	__u8 payload_size;
 	u32 message_type;
+
+	if (!message_page_addr)
+		return;
+	msg = (struct hv_message *)message_page_addr + VMBUS_MESSAGE_SINT;
 
 	/*
 	 * 'enum vmbus_channel_message_type' is supposed to always be 'u32' as
@@ -1128,7 +1130,7 @@ void vmbus_on_msg_dpc(unsigned long data)
 	}
 
 	if (entry->handler_type	== VMHT_BLOCKING) {
-		ctx = kmalloc(struct_size(ctx, msg.payload, payload_size), GFP_ATOMIC);
+		ctx = kmalloc_flex(*ctx, msg.payload, payload_size, GFP_ATOMIC);
 		if (ctx == NULL)
 			return;
 
@@ -1206,6 +1208,14 @@ msg_handled:
 	vmbus_signal_eom(msg, message_type);
 }
 
+void vmbus_on_msg_dpc(unsigned long data)
+{
+	struct hv_per_cpu_context *hv_cpu = (void *)data;
+
+	__vmbus_on_msg_dpc(hv_cpu->hyp_synic_message_page);
+	__vmbus_on_msg_dpc(hv_cpu->para_synic_message_page);
+}
+
 #ifdef CONFIG_PM_SLEEP
 /*
  * Fake RESCIND_CHANNEL messages to clean up hv_sock channels by force for
@@ -1244,21 +1254,19 @@ static void vmbus_force_channel_rescinded(struct vmbus_channel *channel)
 #endif /* CONFIG_PM_SLEEP */
 
 /*
- * Schedule all channels with events pending
+ * Schedule all channels with events pending.
+ * The event page can be directly checked to get the id of
+ * the channel that has the interrupt pending.
  */
-static void vmbus_chan_sched(struct hv_per_cpu_context *hv_cpu)
+static void vmbus_chan_sched(void *event_page_addr)
 {
 	unsigned long *recv_int_page;
 	u32 maxbits, relid;
+	union hv_synic_event_flags *event;
 
-	/*
-	 * The event page can be directly checked to get the id of
-	 * the channel that has the interrupt pending.
-	 */
-	void *page_addr = hv_cpu->synic_event_page;
-	union hv_synic_event_flags *event
-		= (union hv_synic_event_flags *)page_addr +
-					 VMBUS_MESSAGE_SINT;
+	if (!event_page_addr)
+		return;
+	event = (union hv_synic_event_flags *)event_page_addr + VMBUS_MESSAGE_SINT;
 
 	maxbits = HV_EVENT_FLAGS_COUNT;
 	recv_int_page = event->flags;
@@ -1266,6 +1274,11 @@ static void vmbus_chan_sched(struct hv_per_cpu_context *hv_cpu)
 	if (unlikely(!recv_int_page))
 		return;
 
+	/*
+	 * Suggested-by: Michael Kelley <mhklinux@outlook.com>
+	 * One possible optimization would be to keep track of the largest relID that's in use,
+	 * and only scan up to that relID.
+	 */
 	for_each_set_bit(relid, recv_int_page, maxbits) {
 		void (*callback_fn)(void *context);
 		struct vmbus_channel *channel;
@@ -1329,26 +1342,35 @@ sched_unlock_rcu:
 	}
 }
 
-static void __vmbus_isr(void)
+static void vmbus_message_sched(struct hv_per_cpu_context *hv_cpu, void *message_page_addr)
 {
-	struct hv_per_cpu_context *hv_cpu
-		= this_cpu_ptr(hv_context.cpu_context);
-	void *page_addr;
 	struct hv_message *msg;
 
-	vmbus_chan_sched(hv_cpu);
-
-	page_addr = hv_cpu->synic_message_page;
-	msg = (struct hv_message *)page_addr + VMBUS_MESSAGE_SINT;
+	if (!message_page_addr)
+		return;
+	msg = (struct hv_message *)message_page_addr + VMBUS_MESSAGE_SINT;
 
 	/* Check if there are actual msgs to be processed */
 	if (msg->header.message_type != HVMSG_NONE) {
 		if (msg->header.message_type == HVMSG_TIMER_EXPIRED) {
 			hv_stimer0_isr();
 			vmbus_signal_eom(msg, HVMSG_TIMER_EXPIRED);
-		} else
+		} else {
 			tasklet_schedule(&hv_cpu->msg_dpc);
+		}
 	}
+}
+
+static void __vmbus_isr(void)
+{
+	struct hv_per_cpu_context *hv_cpu
+		= this_cpu_ptr(hv_context.cpu_context);
+
+	vmbus_chan_sched(hv_cpu->hyp_synic_event_page);
+	vmbus_chan_sched(hv_cpu->para_synic_event_page);
+
+	vmbus_message_sched(hv_cpu, hv_cpu->hyp_synic_message_page);
+	vmbus_message_sched(hv_cpu, hv_cpu->para_synic_message_page);
 
 	add_interrupt_randomness(vmbus_interrupt);
 }
@@ -1390,7 +1412,7 @@ static struct smp_hotplug_thread vmbus_irq_threads = {
 	.thread_comm            = "vmbus_irq/%u",
 };
 
-static void vmbus_isr(void)
+void vmbus_isr(void)
 {
 	if (IS_ENABLED(CONFIG_PREEMPT_RT)) {
 		vmbus_irqd_wake();
@@ -1399,6 +1421,7 @@ static void vmbus_isr(void)
 		__vmbus_isr();
 	}
 }
+EXPORT_SYMBOL_FOR_MODULES(vmbus_isr, "mshv_vtl");
 
 static irqreturn_t vmbus_percpu_isr(int irq, void *dev_id)
 {
@@ -1413,61 +1436,13 @@ static void vmbus_percpu_work(struct work_struct *work)
 	hv_synic_init(cpu);
 }
 
-/*
- * vmbus_bus_init -Main vmbus driver initialization routine.
- *
- * Here, we
- *	- initialize the vmbus driver context
- *	- invoke the vmbus hv main init routine
- *	- retrieve the channel offers
- */
-static int vmbus_bus_init(void)
+static int vmbus_alloc_synic_and_connect(void)
 {
 	int ret, cpu;
 	struct work_struct __percpu *works;
 
-	ret = hv_init();
-	if (ret != 0) {
-		pr_err("Unable to initialize the hypervisor - 0x%x\n", ret);
-		return ret;
-	}
-
-	ret = bus_register(&hv_bus);
-	if (ret)
-		return ret;
-
-	/*
-	 * VMbus interrupts are best modeled as per-cpu interrupts. If
-	 * on an architecture with support for per-cpu IRQs (e.g. ARM64),
-	 * allocate a per-cpu IRQ using standard Linux kernel functionality.
-	 * If not on such an architecture (e.g., x86/x64), then rely on
-	 * code in the arch-specific portion of the code tree to connect
-	 * the VMbus interrupt handler.
-	 */
-
-	if (IS_ENABLED(CONFIG_PREEMPT_RT) && !vmbus_irq_initialized) {
-		ret = smpboot_register_percpu_thread(&vmbus_irq_threads);
-		if (ret)
-			goto err_kthread;
-		vmbus_irq_initialized = true;
-	}
-
-	if (vmbus_irq == -1) {
-		hv_setup_vmbus_handler(vmbus_isr);
-	} else {
-		vmbus_evt = alloc_percpu(long);
-		ret = request_percpu_irq(vmbus_irq, vmbus_percpu_isr,
-				"Hyper-V VMbus", vmbus_evt);
-		if (ret) {
-			pr_err("Can't request Hyper-V VMbus IRQ %d, Err %d",
-					vmbus_irq, ret);
-			free_percpu(vmbus_evt);
-			goto err_setup;
-		}
-	}
-
 	ret = hv_synic_alloc();
-	if (ret)
+	if (ret < 0)
 		goto err_alloc;
 
 	works = alloc_percpu(struct work_struct);
@@ -1503,6 +1478,77 @@ static int vmbus_bus_init(void)
 	ret = vmbus_connect();
 	if (ret)
 		goto err_connect;
+	return 0;
+
+err_connect:
+	cpuhp_remove_state(hyperv_cpuhp_online);
+	return -ENODEV;
+err_alloc:
+	hv_synic_free();
+	return -ENOMEM;
+}
+
+/*
+ * vmbus_bus_init -Main vmbus driver initialization routine.
+ *
+ * Here, we
+ *	- initialize the vmbus driver context
+ *	- invoke the vmbus hv main init routine
+ *	- retrieve the channel offers
+ */
+static int vmbus_bus_init(void)
+{
+	int ret;
+
+	ret = hv_init();
+	if (ret != 0) {
+		pr_err("Unable to initialize the hypervisor - 0x%x\n", ret);
+		return ret;
+	}
+
+	ret = bus_register(&hv_bus);
+	if (ret)
+		return ret;
+
+	/*
+	 * VMbus interrupts are best modeled as per-cpu interrupts. If
+	 * on an architecture with support for per-cpu IRQs (e.g. ARM64),
+	 * allocate a per-cpu IRQ using standard Linux kernel functionality.
+	 * If not on such an architecture (e.g., x86/x64), then rely on
+	 * code in the arch-specific portion of the code tree to connect
+	 * the VMbus interrupt handler.
+	 */
+
+	if (IS_ENABLED(CONFIG_PREEMPT_RT) && !vmbus_irq_initialized) {
+		ret = smpboot_register_percpu_thread(&vmbus_irq_threads);
+		if (ret)
+			goto err_kthread;
+		vmbus_irq_initialized = true;
+	}
+
+	if (vmbus_irq == -1) {
+		hv_setup_vmbus_handler(vmbus_isr);
+	} else {
+		ret = request_percpu_irq(vmbus_irq, vmbus_percpu_isr,
+				"Hyper-V VMbus", &vmbus_evt);
+		if (ret) {
+			pr_err("Can't request Hyper-V VMbus IRQ %d, Err %d",
+					vmbus_irq, ret);
+			goto err_setup;
+		}
+	}
+
+	/*
+	 * Cache the value as getting it involves a VM exit on x86(_64), and
+	 * doing that on each VP while initializing SynIC's wastes time.
+	 */
+	is_confidential = ms_hyperv.confidential_vmbus_available;
+	if (is_confidential)
+		pr_info("Establishing connection to the confidential VMBus\n");
+	hv_para_set_sint_proxy(!is_confidential);
+	ret = vmbus_alloc_synic_and_connect();
+	if (ret)
+		goto err_connect;
 
 	/*
 	 * Always register the vmbus unload panic notifier because we
@@ -1516,15 +1562,10 @@ static int vmbus_bus_init(void)
 	return 0;
 
 err_connect:
-	cpuhp_remove_state(hyperv_cpuhp_online);
-err_alloc:
-	hv_synic_free();
-	if (vmbus_irq == -1) {
+	if (vmbus_irq == -1)
 		hv_remove_vmbus_handler();
-	} else {
-		free_percpu_irq(vmbus_irq, vmbus_evt);
-		free_percpu(vmbus_evt);
-	}
+	else
+		free_percpu_irq(vmbus_irq, &vmbus_evt);
 err_setup:
 	if (IS_ENABLED(CONFIG_PREEMPT_RT) && vmbus_irq_initialized) {
 		smpboot_unregister_percpu_thread(&vmbus_irq_threads);
@@ -2124,7 +2165,7 @@ struct hv_device *vmbus_device_create(const guid_t *type,
 {
 	struct hv_device *child_device_obj;
 
-	child_device_obj = kzalloc(sizeof(struct hv_device), GFP_KERNEL);
+	child_device_obj = kzalloc_obj(struct hv_device);
 	if (!child_device_obj) {
 		pr_err("Unable to allocate device object for child device\n");
 		return NULL;
@@ -2286,13 +2327,13 @@ static acpi_status vmbus_walk_resources(struct acpi_resource *res, void *ctx)
 	if (end < 0x100000)
 		return AE_OK;
 
-	new_res = kzalloc(sizeof(*new_res), GFP_ATOMIC);
+	new_res = kzalloc_obj(*new_res, GFP_ATOMIC);
 	if (!new_res)
 		return AE_NO_MEMORY;
 
 	/* If this range overlaps the virtual TPM, truncate it. */
-	if (end > VTPM_BASE_ADDRESS && start < VTPM_BASE_ADDRESS)
-		end = VTPM_BASE_ADDRESS;
+	if (end >= VTPM_BASE_ADDRESS && start < VTPM_BASE_ADDRESS)
+		end = VTPM_BASE_ADDRESS - 1;
 
 	new_res->name = "hyperv mmio";
 	new_res->flags = IORESOURCE_MEM;
@@ -2359,13 +2400,32 @@ static void vmbus_mmio_remove(void)
 static void __maybe_unused vmbus_reserve_fb(void)
 {
 	resource_size_t start = 0, size;
+	resource_size_t low_mmio_base;
 	struct pci_dev *pdev;
 
 	if (efi_enabled(EFI_BOOT)) {
 		/* Gen2 VM: get FB base from EFI framebuffer */
 		if (IS_ENABLED(CONFIG_SYSFB)) {
-			start = screen_info.lfb_base;
-			size = max_t(__u32, screen_info.lfb_size, 0x800000);
+			start = sysfb_primary_display.screen.lfb_base;
+			size = max_t(__u32, sysfb_primary_display.screen.lfb_size, 0x800000);
+
+			low_mmio_base = hyperv_mmio->start;
+			if (!low_mmio_base || upper_32_bits(low_mmio_base) ||
+			    (start && start < low_mmio_base)) {
+				pr_warn("Unexpected low mmio base %pa\n", &low_mmio_base);
+			} else {
+				/*
+				 * If the kdump/kexec or CVM kernel's lfb_base
+				 * is 0, fall back to the low mmio base.
+				 */
+				if (!start)
+					start = low_mmio_base;
+				/*
+				 * Reserve half of the space below 4GB for high
+				 * resolutions, but cap the reservation to 128MB.
+				 */
+				size = min((SZ_4G - start) / 2, SZ_128M);
+			}
 		}
 	} else {
 		/* Gen1 VM: get FB base from PCI */
@@ -2380,14 +2440,16 @@ static void __maybe_unused vmbus_reserve_fb(void)
 		}
 
 		/*
-		 * Release the PCI device so hyperv_drm or hyperv_fb driver can
-		 * grab it later.
+		 * Release the PCI device so hyperv_drm driver can grab it
+		 * later.
 		 */
 		pci_dev_put(pdev);
 	}
 
-	if (!start)
+	if (!start) {
+		pr_warn("Unexpected framebuffer mmio base of zero\n");
 		return;
+	}
 
 	/*
 	 * Make a claim for the frame buffer in the resource tree under the
@@ -2397,6 +2459,8 @@ static void __maybe_unused vmbus_reserve_fb(void)
 	 */
 	for (; !fb_mmio && (size >= 0x100000); size >>= 1)
 		fb_mmio = __request_region(hyperv_mmio, start, size, fb_mmio_name, 0);
+
+	pr_info("hv_mmio=%pR,%pR fb=%pR\n", hyperv_mmio, hyperv_mmio->sibling, fb_mmio);
 }
 
 /**
@@ -2640,7 +2704,7 @@ static int vmbus_device_add(struct platform_device *pdev)
 	for_each_of_range(&parser, &range) {
 		struct resource *res;
 
-		res = kzalloc(sizeof(*res), GFP_KERNEL);
+		res = kzalloc_obj(*res);
 		if (!res) {
 			vmbus_mmio_remove();
 			return -ENOMEM;
@@ -2881,10 +2945,10 @@ static void hv_crash_handler(struct pt_regs *regs)
 	 */
 	cpu = smp_processor_id();
 	hv_stimer_cleanup(cpu);
-	hv_synic_disable_regs(cpu);
+	hv_hyp_synic_disable_regs(cpu);
 };
 
-static int hv_synic_suspend(void)
+static int hv_synic_suspend(void *data)
 {
 	/*
 	 * When we reach here, all the non-boot CPUs have been offlined.
@@ -2906,14 +2970,14 @@ static int hv_synic_suspend(void)
 	 * interrupts-disabled context.
 	 */
 
-	hv_synic_disable_regs(0);
+	hv_hyp_synic_disable_regs(0);
 
 	return 0;
 }
 
-static void hv_synic_resume(void)
+static void hv_synic_resume(void *data)
 {
-	hv_synic_enable_regs(0);
+	hv_hyp_synic_enable_regs(0);
 
 	/*
 	 * Note: we don't need to call hv_stimer_init(0), because the timer
@@ -2923,9 +2987,13 @@ static void hv_synic_resume(void)
 }
 
 /* The callbacks run only on CPU0, with irqs_disabled. */
-static struct syscore_ops hv_synic_syscore_ops = {
+static const struct syscore_ops hv_synic_syscore_ops = {
 	.suspend = hv_synic_suspend,
 	.resume = hv_synic_resume,
+};
+
+static struct syscore hv_synic_syscore = {
+	.ops = &hv_synic_syscore_ops,
 };
 
 static int __init hv_acpi_init(void)
@@ -2970,7 +3038,7 @@ static int __init hv_acpi_init(void)
 	hv_setup_kexec_handler(hv_kexec_handler);
 	hv_setup_crash_handler(hv_crash_handler);
 
-	register_syscore_ops(&hv_synic_syscore_ops);
+	register_syscore(&hv_synic_syscore);
 
 	return 0;
 
@@ -2984,19 +3052,17 @@ static void __exit vmbus_exit(void)
 {
 	int cpu;
 
-	unregister_syscore_ops(&hv_synic_syscore_ops);
+	unregister_syscore(&hv_synic_syscore);
 
 	hv_remove_kexec_handler();
 	hv_remove_crash_handler();
 	vmbus_connection.conn_state = DISCONNECTED;
 	hv_stimer_global_cleanup();
 	vmbus_disconnect();
-	if (vmbus_irq == -1) {
+	if (vmbus_irq == -1)
 		hv_remove_vmbus_handler();
-	} else {
-		free_percpu_irq(vmbus_irq, vmbus_evt);
-		free_percpu(vmbus_evt);
-	}
+	else
+		free_percpu_irq(vmbus_irq, &vmbus_evt);
 	if (IS_ENABLED(CONFIG_PREEMPT_RT) && vmbus_irq_initialized) {
 		smpboot_unregister_percpu_thread(&vmbus_irq_threads);
 		vmbus_irq_initialized = false;

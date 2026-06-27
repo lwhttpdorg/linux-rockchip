@@ -49,8 +49,6 @@
 #define NO_CONT_MAPPINGS	BIT(1)
 #define NO_EXEC_MAPPINGS	BIT(2)	/* assumes FEAT_HPDS is not used */
 
-#define INVALID_PHYS_ADDR	(-1ULL)
-
 DEFINE_STATIC_KEY_FALSE(arm64_ptdump_lock_key);
 
 u64 kimage_voffset __ro_after_init;
@@ -560,7 +558,7 @@ static phys_addr_t __pgd_pgtable_alloc(struct mm_struct *mm, gfp_t gfp,
 }
 
 static phys_addr_t
-try_pgd_pgtable_alloc_init_mm(enum pgtable_type pgtable_type, gfp_t gfp)
+pgd_pgtable_alloc_init_mm_gfp(enum pgtable_type pgtable_type, gfp_t gfp)
 {
 	return __pgd_pgtable_alloc(&init_mm, gfp, pgtable_type);
 }
@@ -568,7 +566,7 @@ try_pgd_pgtable_alloc_init_mm(enum pgtable_type pgtable_type, gfp_t gfp)
 static phys_addr_t __maybe_unused
 pgd_pgtable_alloc_init_mm(enum pgtable_type pgtable_type)
 {
-	return __pgd_pgtable_alloc(&init_mm, GFP_PGTABLE_KERNEL, pgtable_type);
+	return pgd_pgtable_alloc_init_mm_gfp(pgtable_type, GFP_PGTABLE_KERNEL);
 }
 
 static phys_addr_t
@@ -595,7 +593,7 @@ static int split_pmd(pmd_t *pmdp, pmd_t pmd, gfp_t gfp, bool to_cont)
 	pte_t *ptep;
 	int i;
 
-	pte_phys = try_pgd_pgtable_alloc_init_mm(TABLE_PTE, gfp);
+	pte_phys = pgd_pgtable_alloc_init_mm_gfp(TABLE_PTE, gfp);
 	if (pte_phys == INVALID_PHYS_ADDR)
 		return -ENOMEM;
 	ptep = (pte_t *)phys_to_virt(pte_phys);
@@ -642,7 +640,7 @@ static int split_pud(pud_t *pudp, pud_t pud, gfp_t gfp, bool to_cont)
 	pmd_t *pmdp;
 	int i;
 
-	pmd_phys = try_pgd_pgtable_alloc_init_mm(TABLE_PMD, gfp);
+	pmd_phys = pgd_pgtable_alloc_init_mm_gfp(TABLE_PMD, gfp);
 	if (pmd_phys == INVALID_PHYS_ADDR)
 		return -ENOMEM;
 	pmdp = (pmd_t *)phys_to_virt(pmd_phys);
@@ -827,7 +825,7 @@ int split_kernel_leaf_mapping(unsigned long start, unsigned long end)
 		return -EINVAL;
 
 	mutex_lock(&pgtable_split_lock);
-	arch_enter_lazy_mmu_mode();
+	lazy_mmu_mode_enable();
 
 	/*
 	 * The split_kernel_leaf_mapping_locked() may sleep, it is not a
@@ -849,7 +847,7 @@ int split_kernel_leaf_mapping(unsigned long start, unsigned long end)
 			ret = split_kernel_leaf_mapping_locked(end);
 	}
 
-	arch_leave_lazy_mmu_mode();
+	lazy_mmu_mode_disable();
 	mutex_unlock(&pgtable_split_lock);
 	return ret;
 }
@@ -910,10 +908,10 @@ static int range_split_to_ptes(unsigned long start, unsigned long end, gfp_t gfp
 {
 	int ret;
 
-	arch_enter_lazy_mmu_mode();
+	lazy_mmu_mode_enable();
 	ret = walk_kernel_page_table_range_lockless(start, end,
 					&split_to_ptes_ops, NULL, &gfp);
-	arch_leave_lazy_mmu_mode();
+	lazy_mmu_mode_disable();
 
 	return ret;
 }

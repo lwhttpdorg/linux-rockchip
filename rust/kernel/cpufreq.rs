@@ -401,6 +401,7 @@ impl TableBuilder {
 /// ```
 /// use kernel::cpufreq::{DEFAULT_TRANSITION_LATENCY_NS, Policy};
 ///
+/// #[allow(clippy::double_parens, reason = "False positive before 1.92.0")]
 /// fn update_policy(policy: &mut Policy) {
 ///     policy
 ///         .set_dvfs_possible_from_any_cpu(true)
@@ -840,7 +841,6 @@ pub trait Driver {
 /// ```
 /// use kernel::{
 ///     cpufreq,
-///     c_str,
 ///     device::{Core, Device},
 ///     macros::vtable,
 ///     of, platform,
@@ -853,7 +853,7 @@ pub trait Driver {
 ///
 /// #[vtable]
 /// impl cpufreq::Driver for SampleDriver {
-///     const NAME: &'static CStr = c_str!("cpufreq-sample");
+///     const NAME: &'static CStr = c"cpufreq-sample";
 ///     const FLAGS: u16 = cpufreq::flags::NEED_INITIAL_FREQ_CHECK | cpufreq::flags::IS_COOLING_DEV;
 ///     const BOOST_ENABLED: bool = true;
 ///
@@ -893,9 +893,9 @@ pub trait Driver {
 ///     fn probe(
 ///         pdev: &platform::Device<Core>,
 ///         _id_info: Option<&Self::IdInfo>,
-///     ) -> Result<Pin<KBox<Self>>> {
+///     ) -> impl PinInit<Self, Error> {
 ///         cpufreq::Registration::<SampleDriver>::new_foreign_owned(pdev.as_ref())?;
-///         Ok(KBox::new(Self {}, GFP_KERNEL)?.into())
+///         Ok(Self {})
 ///     }
 /// }
 /// ```

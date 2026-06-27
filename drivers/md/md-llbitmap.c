@@ -378,7 +378,7 @@ static void llbitmap_infect_dirty_bits(struct llbitmap *llbitmap,
 		case BitClean:
 			pctl->state[pos] = BitDirty;
 			break;
-		};
+		}
 	}
 }
 
@@ -983,7 +983,7 @@ static int llbitmap_create(struct mddev *mddev)
 	if (ret)
 		return ret;
 
-	llbitmap = kzalloc(sizeof(*llbitmap), GFP_KERNEL);
+	llbitmap = kzalloc_obj(*llbitmap);
 	if (!llbitmap)
 		return -ENOMEM;
 

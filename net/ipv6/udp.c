@@ -876,7 +876,8 @@ static int udpv6_queue_rcv_one_skb(struct sock *sk, struct sk_buff *skb)
 	/*
 	 * UDP-Lite specific tests, ignored on UDP sockets (see net/ipv4/udp.c).
 	 */
-	if (udp_test_bit(UDPLITE_RECV_CC, sk) && UDP_SKB_CB(skb)->partial_cov) {
+	if (unlikely(udp_test_bit(UDPLITE_RECV_CC, sk) &&
+		     UDP_SKB_CB(skb)->partial_cov)) {
 		u16 pcrlen = READ_ONCE(up->pcrlen);
 
 		if (pcrlen == 0) {          /* full coverage was set  */
@@ -1283,7 +1284,7 @@ static void udp_v6_flush_pending_frames(struct sock *sk)
 	}
 }
 
-static int udpv6_pre_connect(struct sock *sk, struct sockaddr *uaddr,
+static int udpv6_pre_connect(struct sock *sk, struct sockaddr_unsized *uaddr,
 			     int addr_len)
 {
 	if (addr_len < offsetofend(struct sockaddr, sa_family))
@@ -1304,7 +1305,8 @@ static int udpv6_pre_connect(struct sock *sk, struct sockaddr *uaddr,
 	return BPF_CGROUP_RUN_PROG_INET6_CONNECT_LOCK(sk, uaddr, &addr_len);
 }
 
-static int udpv6_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+static int udpv6_connect(struct sock *sk, struct sockaddr_unsized *uaddr,
+			 int addr_len)
 {
 	int res;
 
@@ -1439,7 +1441,7 @@ csum_partial:
 
 send:
 	err = ip6_send_skb(skb);
-	if (err) {
+	if (unlikely(err)) {
 		if (err == -ENOBUFS && !inet6_test_bit(RECVERR6, sk)) {
 			UDP6_INC_STATS(sock_net(sk),
 				       UDP_MIB_SNDBUFERRORS, is_udplite);

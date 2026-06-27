@@ -243,9 +243,7 @@ osnoise_print_stats(struct osnoise_tool *top)
 
 	osnoise_top_header(top);
 
-	for (i = 0; i < nr_cpus; i++) {
-		if (params->common.cpus && !CPU_ISSET(i, &params->common.monitored_cpus))
-			continue;
+	for_each_monitored_cpu(i, nr_cpus, &params->common) {
 		osnoise_top_print(top, i);
 	}
 
@@ -257,16 +255,18 @@ osnoise_print_stats(struct osnoise_tool *top)
 /*
  * osnoise_top_usage - prints osnoise top usage message
  */
-static void osnoise_top_usage(struct osnoise_params *params, char *usage)
+static void osnoise_top_usage(struct osnoise_params *params)
 {
-	int i;
+	const char *tool, *mode, *desc;
 
-	static const char * const msg[] = {
-		" [-h] [-q] [-D] [-d s] [-a us] [-p us] [-r us] [-s us] [-S us] \\",
+	static const char * const msg_start[] = {
+		"[-q] [-D] [-d s] [-a us] [-p us] [-r us] [-s us] [-S us] \\",
 		"	  [-T us] [-t [file]] [-e sys[:event]] [--filter <filter>] [--trigger <trigger>] \\",
 		"	  [-c cpu-list] [-H cpu-list] [-P priority] [-C [cgroup_name]] [--warm-up s]",
-		"",
-		"	  -h/--help: print this menu",
+		NULL,
+	};
+
+	static const char * const msg_opts[] = {
 		"	  -a/--auto: set automatic trace mode, stopping the session if argument in us sample is hit",
 		"	  -p/--period us: osnoise period in us",
 		"	  -r/--runtime us: osnoise runtime in us",
@@ -296,32 +296,17 @@ static void osnoise_top_usage(struct osnoise_params *params, char *usage)
 		NULL,
 	};
 
-	if (usage)
-		fprintf(stderr, "%s\n", usage);
-
 	if (params->mode == MODE_OSNOISE) {
-		fprintf(stderr,
-			"rtla osnoise top: a per-cpu summary of the OS noise (version %s)\n",
-			VERSION);
-
-		fprintf(stderr, "  usage: rtla osnoise [top]");
+		tool = "osnoise";
+		mode = "top";
+		desc = "a per-cpu summary of the OS noise";
+	} else {
+		tool = "hwnoise";
+		mode = "";
+		desc = "a summary of hardware-related noise";
 	}
 
-	if (params->mode == MODE_HWNOISE) {
-		fprintf(stderr,
-			"rtla hwnoise: a summary of hardware-related noise (version %s)\n",
-			VERSION);
-
-		fprintf(stderr, "  usage: rtla hwnoise");
-	}
-
-	for (i = 0; msg[i]; i++)
-		fprintf(stderr, "%s\n", msg[i]);
-
-	if (usage)
-		exit(EXIT_FAILURE);
-
-	exit(EXIT_SUCCESS);
+	common_usage(tool, mode, desc, msg_start, msg_opts);
 }
 
 /*
@@ -330,7 +315,6 @@ static void osnoise_top_usage(struct osnoise_params *params, char *usage)
 struct common_params *osnoise_top_parse_args(int argc, char **argv)
 {
 	struct osnoise_params *params;
-	struct trace_events *tevent;
 	int retval;
 	int c;
 	char *trace_output = NULL;
@@ -353,16 +337,10 @@ struct common_params *osnoise_top_parse_args(int argc, char **argv)
 
 	while (1) {
 		static struct option long_options[] = {
+			COMMON_OPTIONS,
 			{"auto",		required_argument,	0, 'a'},
-			{"cpus",		required_argument,	0, 'c'},
-			{"cgroup",		optional_argument,	0, 'C'},
-			{"debug",		no_argument,		0, 'D'},
-			{"duration",		required_argument,	0, 'd'},
-			{"event",		required_argument,	0, 'e'},
-			{"house-keeping",	required_argument,	0, 'H'},
 			{"help",		no_argument,		0, 'h'},
 			{"period",		required_argument,	0, 'p'},
-			{"priority",		required_argument,	0, 'P'},
 			{"quiet",		no_argument,		0, 'q'},
 			{"runtime",		required_argument,	0, 'r'},
 			{"stop",		required_argument,	0, 's'},
@@ -378,15 +356,14 @@ struct common_params *osnoise_top_parse_args(int argc, char **argv)
 			{0, 0, 0, 0}
 		};
 
-		/* getopt_long stores the option index here. */
-		int option_index = 0;
-
-		c = getopt_long(argc, argv, "a:c:C::d:De:hH:p:P:qr:s:S:t::T:0:1:2:3:",
-				 long_options, &option_index);
+		c = getopt_auto(argc, argv, long_options);
 
 		/* Detect the end of the options. */
 		if (c == -1)
 			break;
+
+		if (set_common_option(c, argc, argv, &params->common))
+			continue;
 
 		switch (c) {
 		case 'a':
@@ -401,58 +378,14 @@ struct common_params *osnoise_top_parse_args(int argc, char **argv)
 				trace_output = "osnoise_trace.txt";
 
 			break;
-		case 'c':
-			retval = parse_cpu_set(optarg, &params->common.monitored_cpus);
-			if (retval)
-				osnoise_top_usage(params, "\nInvalid -c cpu list\n");
-			params->common.cpus = optarg;
-			break;
-		case 'C':
-			params->common.cgroup = 1;
-			params->common.cgroup_name = parse_optional_arg(argc, argv);
-			break;
-		case 'D':
-			config_debug = 1;
-			break;
-		case 'd':
-			params->common.duration = parse_seconds_duration(optarg);
-			if (!params->common.duration)
-				osnoise_top_usage(params, "Invalid -d duration\n");
-			break;
-		case 'e':
-			tevent = trace_event_alloc(optarg);
-			if (!tevent) {
-				err_msg("Error alloc trace event");
-				exit(EXIT_FAILURE);
-			}
-
-			if (params->common.events)
-				tevent->next = params->common.events;
-			params->common.events = tevent;
-
-			break;
 		case 'h':
 		case '?':
-			osnoise_top_usage(params, NULL);
-			break;
-		case 'H':
-			params->common.hk_cpus = 1;
-			retval = parse_cpu_set(optarg, &params->common.hk_cpu_set);
-			if (retval) {
-				err_msg("Error parsing house keeping CPUs\n");
-				exit(EXIT_FAILURE);
-			}
+			osnoise_top_usage(params);
 			break;
 		case 'p':
 			params->period = get_llong_from_str(optarg);
 			if (params->period > 10000000)
-				osnoise_top_usage(params, "Period longer than 10 s\n");
-			break;
-		case 'P':
-			retval = parse_prio(optarg, &params->common.sched_param);
-			if (retval == -1)
-				osnoise_top_usage(params, "Invalid -P priority");
-			params->common.set_sched = 1;
+				fatal("Period longer than 10 s");
 			break;
 		case 'q':
 			params->common.quiet = 1;
@@ -460,7 +393,7 @@ struct common_params *osnoise_top_parse_args(int argc, char **argv)
 		case 'r':
 			params->runtime = get_llong_from_str(optarg);
 			if (params->runtime < 100)
-				osnoise_top_usage(params, "Runtime shorter than 100 us\n");
+				fatal("Runtime shorter than 100 us");
 			break;
 		case 's':
 			params->common.stop_us = get_llong_from_str(optarg);
@@ -479,23 +412,19 @@ struct common_params *osnoise_top_parse_args(int argc, char **argv)
 		case '0': /* trigger */
 			if (params->common.events) {
 				retval = trace_event_add_trigger(params->common.events, optarg);
-				if (retval) {
-					err_msg("Error adding trigger %s\n", optarg);
-					exit(EXIT_FAILURE);
-				}
+				if (retval)
+					fatal("Error adding trigger %s", optarg);
 			} else {
-				osnoise_top_usage(params, "--trigger requires a previous -e\n");
+				fatal("--trigger requires a previous -e");
 			}
 			break;
 		case '1': /* filter */
 			if (params->common.events) {
 				retval = trace_event_add_filter(params->common.events, optarg);
-				if (retval) {
-					err_msg("Error adding filter %s\n", optarg);
-					exit(EXIT_FAILURE);
-				}
+				if (retval)
+					fatal("Error adding filter %s", optarg);
 			} else {
-				osnoise_top_usage(params, "--filter requires a previous -e\n");
+				fatal("--filter requires a previous -e");
 			}
 			break;
 		case '2':
@@ -507,31 +436,25 @@ struct common_params *osnoise_top_parse_args(int argc, char **argv)
 		case '4':
 			retval = actions_parse(&params->common.threshold_actions, optarg,
 					       "osnoise_trace.txt");
-			if (retval) {
-				err_msg("Invalid action %s\n", optarg);
-				exit(EXIT_FAILURE);
-			}
+			if (retval)
+				fatal("Invalid action %s", optarg);
 			break;
 		case '5':
 			retval = actions_parse(&params->common.end_actions, optarg,
 					       "osnoise_trace.txt");
-			if (retval) {
-				err_msg("Invalid action %s\n", optarg);
-				exit(EXIT_FAILURE);
-			}
+			if (retval)
+				fatal("Invalid action %s", optarg);
 			break;
 		default:
-			osnoise_top_usage(params, "Invalid option");
+			fatal("Invalid option");
 		}
 	}
 
 	if (trace_output)
 		actions_add_trace_output(&params->common.threshold_actions, trace_output);
 
-	if (geteuid()) {
-		err_msg("osnoise needs root permission\n");
-		exit(EXIT_FAILURE);
-	}
+	if (geteuid())
+		fatal("osnoise needs root permission");
 
 	return &params->common;
 }

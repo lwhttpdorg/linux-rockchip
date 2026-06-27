@@ -628,8 +628,6 @@ static int rtw8922a_read_efuse_rf(struct rtw89_dev *rtwdev, u8 *log_map)
 	rtw8922a_efuse_parsing_tssi(rtwdev, map);
 	rtw8922a_efuse_parsing_gain_offset(rtwdev, map);
 
-	rtw89_info(rtwdev, "chip rfe_type is %d\n", efuse->rfe_type);
-
 	return 0;
 }
 
@@ -2398,19 +2396,29 @@ static void rtw8922a_bb_cfg_txrx_path(struct rtw89_dev *rtwdev)
 	enum rtw89_band band = chan->band_type;
 	struct rtw89_hal *hal = &rtwdev->hal;
 	u8 ntx_path = RF_PATH_AB;
+	u8 nrx_path = RF_PATH_AB;
 	u32 tx_en0, tx_en1;
+	u8 rx_nss = 2;
 
 	if (hal->antenna_tx == RF_A)
 		ntx_path = RF_PATH_A;
 	else if (hal->antenna_tx == RF_B)
 		ntx_path = RF_PATH_B;
 
+	if (hal->antenna_rx == RF_A)
+		nrx_path = RF_PATH_A;
+	else if (hal->antenna_rx == RF_B)
+		nrx_path = RF_PATH_B;
+
+	if (nrx_path != RF_PATH_AB)
+		rx_nss = 1;
+
 	rtw8922a_hal_reset(rtwdev, RTW89_PHY_0, RTW89_MAC_0, band, &tx_en0, true);
 	if (rtwdev->dbcc_en)
 		rtw8922a_hal_reset(rtwdev, RTW89_PHY_1, RTW89_MAC_1, band,
 				   &tx_en1, true);
 
-	rtw8922a_ctrl_trx_path(rtwdev, ntx_path, 2, RF_PATH_AB, 2);
+	rtw8922a_ctrl_trx_path(rtwdev, ntx_path, 2, nrx_path, rx_nss);
 
 	rtw8922a_hal_reset(rtwdev, RTW89_PHY_0, RTW89_MAC_0, band, &tx_en0, false);
 	if (rtwdev->dbcc_en)
@@ -2867,12 +2875,15 @@ static const struct rtw89_chip_ops rtw8922a_chip_ops = {
 	.cfg_txrx_path		= rtw8922a_bb_cfg_txrx_path,
 	.set_txpwr_ul_tb_offset	= NULL,
 	.digital_pwr_comp	= rtw8922a_digital_pwr_comp,
+	.calc_rx_gain_normal	= NULL,
 	.pwr_on_func		= rtw8922a_pwr_on_func,
 	.pwr_off_func		= rtw8922a_pwr_off_func,
 	.query_rxdesc		= rtw89_core_query_rxdesc_v2,
 	.fill_txdesc		= rtw89_core_fill_txdesc_v2,
 	.fill_txdesc_fwcmd	= rtw89_core_fill_txdesc_fwcmd_v2,
-	.get_ch_dma		= rtw89_core_get_ch_dma,
+	.get_ch_dma		= {rtw89_core_get_ch_dma,
+				   rtw89_core_get_ch_dma_v2,
+				   NULL,},
 	.cfg_ctrl_path		= rtw89_mac_cfg_ctrl_path_v2,
 	.mac_cfg_gnt		= rtw89_mac_cfg_gnt_v2,
 	.stop_sch_tx		= rtw89_mac_stop_sch_tx_v2,
@@ -2886,6 +2897,7 @@ static const struct rtw89_chip_ops rtw8922a_chip_ops = {
 	.h2c_default_dmac_tbl	= rtw89_fw_h2c_default_dmac_tbl_v2,
 	.h2c_update_beacon	= rtw89_fw_h2c_update_beacon_be,
 	.h2c_ba_cam		= rtw89_fw_h2c_ba_cam_v1,
+	.h2c_wow_cam_update	= rtw89_fw_h2c_wow_cam_update,
 
 	.btc_set_rfe		= rtw8922a_btc_set_rfe,
 	.btc_init_cfg		= rtw8922a_btc_init_cfg,
@@ -2914,6 +2926,10 @@ const struct rtw89_chip_info rtw8922a_chip_info = {
 	.small_fifo_size	= false,
 	.dle_scc_rsvd_size	= 0,
 	.max_amsdu_limit	= 8000,
+	.max_vht_mpdu_cap	= IEEE80211_VHT_CAP_MAX_MPDU_LENGTH_11454,
+	.max_eht_mpdu_cap	= IEEE80211_EHT_MAC_CAP0_MAX_MPDU_LEN_7991,
+	.max_tx_agg_num		= 128,
+	.max_rx_agg_num		= 64,
 	.dis_2g_40m_ul_ofdma	= false,
 	.rsvd_ple_ofst		= 0x8f800,
 	.hfc_param_ini		= {rtw8922a_hfc_param_ini_pcie, NULL, NULL},
@@ -2970,6 +2986,7 @@ const struct rtw89_chip_info rtw8922a_chip_info = {
 	.bacam_num		= 24,
 	.bacam_dynamic_num	= 8,
 	.bacam_ver		= RTW89_BACAM_V1,
+	.addrcam_ver		= 0,
 	.ppdu_max_usr		= 16,
 	.sec_ctrl_efuse_size	= 4,
 	.physical_efuse_size	= 0x1300,
@@ -3026,12 +3043,14 @@ const struct rtw89_chip_info rtw8922a_chip_info = {
 	.bss_clr_map_reg	= R_BSS_CLR_MAP_V2,
 	.rfkill_init		= &rtw8922a_rfkill_regs,
 	.rfkill_get		= {R_BE_GPIO_EXT_CTRL, B_BE_GPIO_IN_9},
+	.btc_sb			= {{{R_BE_SCOREBOARD, R_BE_SCOREBOARD},}},
 	.dma_ch_mask		= 0,
 	.edcca_regs		= &rtw8922a_edcca_regs,
 #ifdef CONFIG_PM
 	.wowlan_stub		= &rtw_wowlan_stub_8922a,
 #endif
 	.xtal_info		= NULL,
+	.default_quirks		= 0,
 };
 EXPORT_SYMBOL(rtw8922a_chip_info);
 

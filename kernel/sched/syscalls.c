@@ -64,7 +64,6 @@ static int effective_prio(struct task_struct *p)
 
 void set_user_nice(struct task_struct *p, long nice)
 {
-	struct rq *rq;
 	int old_prio;
 
 	if (task_nice(p) == nice || nice < MIN_NICE || nice > MAX_NICE)
@@ -73,10 +72,7 @@ void set_user_nice(struct task_struct *p, long nice)
 	 * We have to be careful, if called from sys_setpriority(),
 	 * the task might be in the middle of scheduling on another CPU.
 	 */
-	CLASS(task_rq_lock, rq_guard)(p);
-	rq = rq_guard.rq;
-
-	update_rq_clock(rq);
+	guard(task_rq_lock)(p);
 
 	/*
 	 * The RT priorities are set via sched_setscheduler(), but we still
@@ -89,18 +85,12 @@ void set_user_nice(struct task_struct *p, long nice)
 		return;
 	}
 
-	scoped_guard (sched_change, p, DEQUEUE_SAVE | DEQUEUE_NOCLOCK) {
+	scoped_guard (sched_change, p, DEQUEUE_SAVE) {
 		p->static_prio = NICE_TO_PRIO(nice);
 		set_load_weight(p, true);
 		old_prio = p->prio;
 		p->prio = effective_prio(p);
 	}
-
-	/*
-	 * If the task increased its priority or is running and
-	 * lowered its priority, then reschedule its CPU:
-	 */
-	p->sched_class->prio_changed(rq, p, old_prio);
 }
 EXPORT_SYMBOL(set_user_nice);
 
@@ -190,35 +180,7 @@ int task_prio(const struct task_struct *p)
  */
 int idle_cpu(int cpu)
 {
-	struct rq *rq = cpu_rq(cpu);
-
-	if (rq->curr != rq->idle)
-		return 0;
-
-	if (rq->nr_running)
-		return 0;
-
-	if (rq->ttwu_pending)
-		return 0;
-
-	return 1;
-}
-
-/**
- * available_idle_cpu - is a given CPU idle for enqueuing work.
- * @cpu: the CPU in question.
- *
- * Return: 1 if the CPU is currently idle. 0 otherwise.
- */
-int available_idle_cpu(int cpu)
-{
-	if (!idle_cpu(cpu))
-		return 0;
-
-	if (vcpu_is_preempted(cpu))
-		return 0;
-
-	return 1;
+	return idle_rq(cpu_rq(cpu));
 }
 
 /**
@@ -713,8 +675,8 @@ change:
 	prev_class = p->sched_class;
 	next_class = __setscheduler_class(policy, newprio);
 
-	if (prev_class != next_class && p->se.sched_delayed)
-		dequeue_task(rq, p, DEQUEUE_SLEEP | DEQUEUE_DELAYED | DEQUEUE_NOCLOCK);
+	if (prev_class != next_class)
+		queue_flags |= DEQUEUE_CLASS;
 
 	scoped_guard (sched_change, p, queue_flags) {
 
@@ -725,7 +687,6 @@ change:
 			__setscheduler_dl_pi(newprio, policy, p, scope);
 		}
 		__setscheduler_uclamp(p, attr);
-		check_class_changing(rq, p, prev_class);
 
 		if (scope->queued) {
 			/*
@@ -736,8 +697,6 @@ change:
 				scope->flags |= ENQUEUE_HEAD;
 		}
 	}
-
-	check_class_changed(rq, p, prev_class, oldprio);
 
 	/* Avoid rq from going away on us: */
 	preempt_disable();
@@ -866,6 +825,19 @@ void sched_set_fifo_low(struct task_struct *p)
 	WARN_ON_ONCE(sched_setscheduler_nocheck(p, SCHED_FIFO, &sp) != 0);
 }
 EXPORT_SYMBOL_GPL(sched_set_fifo_low);
+
+/*
+ * Used when the primary interrupt handler is forced into a thread, in addition
+ * to the (always threaded) secondary handler.  The secondary handler gets a
+ * slightly lower priority so that the primary handler can preempt it, thereby
+ * emulating the behavior of a non-PREEMPT_RT system where the primary handler
+ * runs in hard interrupt context.
+ */
+void sched_set_fifo_secondary(struct task_struct *p)
+{
+	struct sched_param sp = { .sched_priority = MAX_RT_PRIO / 2 - 1 };
+	WARN_ON_ONCE(sched_setscheduler_nocheck(p, SCHED_FIFO, &sp) != 0);
+}
 
 void sched_set_normal(struct task_struct *p, int nice)
 {

@@ -614,7 +614,7 @@ static int send_packet(struct imon_context *ictx)
 		ictx->tx_urb->actual_length = 0;
 	} else {
 		/* fill request into kmalloc'ed space: */
-		control_req = kmalloc(sizeof(*control_req), GFP_KERNEL);
+		control_req = kmalloc_obj(*control_req);
 		if (control_req == NULL)
 			return -ENOMEM;
 
@@ -2233,7 +2233,7 @@ static struct imon_context *imon_init_intf0(struct usb_interface *intf,
 	struct usb_host_interface *iface_desc;
 	int ret = -ENOMEM;
 
-	ictx = kzalloc(sizeof(*ictx), GFP_KERNEL);
+	ictx = kzalloc_obj(*ictx);
 	if (!ictx)
 		goto exit;
 
@@ -2541,10 +2541,9 @@ static void imon_disconnect(struct usb_interface *interface)
 
 	if (ifnum == 0) {
 		ictx->dev_present_intf0 = false;
-		rc_unregister_device(ictx->rdev);
 		usb_kill_urb(ictx->rx_urb_intf0);
 		input_unregister_device(ictx->idev);
-		rc_free_device(ictx->rdev);
+		rc_unregister_device(ictx->rdev);
 		if (ictx->display_supported) {
 			if (ictx->display_type == IMON_DISPLAY_TYPE_LCD)
 				usb_deregister_dev(interface, &imon_lcd_class);

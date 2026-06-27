@@ -449,7 +449,7 @@ bool mptcp_pm_alloc_anno_list(struct mptcp_sock *msk,
 		goto reset_timer;
 	}
 
-	add_entry = kmalloc(sizeof(*add_entry), GFP_ATOMIC);
+	add_entry = kmalloc_obj(*add_entry, GFP_ATOMIC);
 	if (!add_entry)
 		return false;
 
@@ -657,6 +657,7 @@ void mptcp_pm_subflow_established(struct mptcp_sock *msk)
 void mptcp_pm_subflow_check_next(struct mptcp_sock *msk,
 				 const struct mptcp_subflow_context *subflow)
 {
+	struct sock *sk = (struct sock *)msk;
 	struct mptcp_pm_data *pm = &msk->pm;
 	bool update_subflows;
 
@@ -680,7 +681,8 @@ void mptcp_pm_subflow_check_next(struct mptcp_sock *msk,
 	/* Even if this subflow is not really established, tell the PM to try
 	 * to pick the next ones, if possible.
 	 */
-	if (mptcp_pm_nl_check_work_pending(msk))
+	if (mptcp_is_fully_established(sk) &&
+	    mptcp_pm_nl_check_work_pending(msk))
 		mptcp_pm_schedule_work(msk, MPTCP_PM_SUBFLOW_ESTABLISHED);
 
 	spin_unlock_bh(&pm->lock);

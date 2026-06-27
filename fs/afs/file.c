@@ -86,7 +86,7 @@ int afs_cache_wb_key(struct afs_vnode *vnode, struct afs_file *af)
 {
 	struct afs_wb_key *wbk, *p;
 
-	wbk = kzalloc(sizeof(struct afs_wb_key), GFP_KERNEL);
+	wbk = kzalloc_obj(struct afs_wb_key);
 	if (!wbk)
 		return -ENOMEM;
 	refcount_set(&wbk->usage, 2);
@@ -130,7 +130,7 @@ int afs_open(struct inode *inode, struct file *file)
 		goto error;
 	}
 
-	af = kzalloc(sizeof(*af), GFP_KERNEL);
+	af = kzalloc_obj(*af);
 	if (!af) {
 		ret = -ENOMEM;
 		goto error_key;
@@ -424,19 +424,33 @@ static void afs_free_request(struct netfs_io_request *rreq)
 	afs_put_wb_key(rreq->netfs_priv2);
 }
 
-static void afs_update_i_size(struct inode *inode, loff_t new_i_size)
+/*
+ * Set the file size and block count, taking ->cb_lock and ->i_lock to maintain
+ * coherency and prevent 64-bit tearing on 32-bit arches.
+ *
+ * Also, estimate the number of 512 bytes blocks used, rounded up to nearest 1K
+ * for consistency with other AFS clients.
+ */
+void afs_set_i_size(struct afs_vnode *vnode, loff_t new_i_size)
 {
-	struct afs_vnode *vnode = AFS_FS_I(inode);
+	struct inode *inode = &vnode->netfs.inode;
 	loff_t i_size;
 
 	write_seqlock(&vnode->cb_lock);
-	i_size = i_size_read(&vnode->netfs.inode);
+	spin_lock(&inode->i_lock);
+	i_size = i_size_read(inode);
 	if (new_i_size > i_size) {
-		i_size_write(&vnode->netfs.inode, new_i_size);
-		inode_set_bytes(&vnode->netfs.inode, new_i_size);
+		i_size_write(inode, new_i_size);
+		inode_set_bytes(inode, round_up(new_i_size, 1024));
 	}
+	spin_unlock(&inode->i_lock);
 	write_sequnlock(&vnode->cb_lock);
 	fscache_update_cookie(afs_vnode_cache(vnode), NULL, &new_i_size);
+}
+
+static void afs_update_i_size(struct inode *inode, loff_t new_i_size)
+{
+	afs_set_i_size(AFS_FS_I(inode), new_i_size);
 }
 
 static void afs_netfs_invalidate_cache(struct netfs_io_request *wreq)

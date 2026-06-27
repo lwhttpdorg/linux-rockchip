@@ -608,8 +608,8 @@ void amdgpu_dpm_enable_uvd(struct amdgpu_device *adev, bool enable)
 
 	ret = amdgpu_dpm_set_powergating_by_smu(adev, AMD_IP_BLOCK_TYPE_UVD, !enable, 0);
 	if (ret)
-		DRM_ERROR("Dpm %s uvd failed, ret = %d. \n",
-			  enable ? "enable" : "disable", ret);
+		drm_err(adev_to_drm(adev), "DPM %s uvd failed, ret = %d.\n",
+			enable ? "enable" : "disable", ret);
 }
 
 void amdgpu_dpm_enable_vcn(struct amdgpu_device *adev, bool enable, int inst)
@@ -618,8 +618,8 @@ void amdgpu_dpm_enable_vcn(struct amdgpu_device *adev, bool enable, int inst)
 
 	ret = amdgpu_dpm_set_powergating_by_smu(adev, AMD_IP_BLOCK_TYPE_VCN, !enable, inst);
 	if (ret)
-		DRM_ERROR("Dpm %s uvd failed, ret = %d. \n",
-			  enable ? "enable" : "disable", ret);
+		drm_err(adev_to_drm(adev), "DPM %s vcn failed, ret = %d.\n",
+			enable ? "enable" : "disable", ret);
 }
 
 void amdgpu_dpm_enable_vce(struct amdgpu_device *adev, bool enable)
@@ -643,8 +643,8 @@ void amdgpu_dpm_enable_vce(struct amdgpu_device *adev, bool enable)
 
 	ret = amdgpu_dpm_set_powergating_by_smu(adev, AMD_IP_BLOCK_TYPE_VCE, !enable, 0);
 	if (ret)
-		DRM_ERROR("Dpm %s vce failed, ret = %d. \n",
-			  enable ? "enable" : "disable", ret);
+		drm_err(adev_to_drm(adev), "DPM %s vce failed, ret = %d.\n",
+			enable ? "enable" : "disable", ret);
 }
 
 void amdgpu_dpm_enable_jpeg(struct amdgpu_device *adev, bool enable)
@@ -653,8 +653,8 @@ void amdgpu_dpm_enable_jpeg(struct amdgpu_device *adev, bool enable)
 
 	ret = amdgpu_dpm_set_powergating_by_smu(adev, AMD_IP_BLOCK_TYPE_JPEG, !enable, 0);
 	if (ret)
-		DRM_ERROR("Dpm %s jpeg failed, ret = %d. \n",
-			  enable ? "enable" : "disable", ret);
+		drm_err(adev_to_drm(adev), "Dpm %s jpeg failed, ret = %d.\n",
+			enable ? "enable" : "disable", ret);
 }
 
 void amdgpu_dpm_enable_vpe(struct amdgpu_device *adev, bool enable)
@@ -663,8 +663,8 @@ void amdgpu_dpm_enable_vpe(struct amdgpu_device *adev, bool enable)
 
 	ret = amdgpu_dpm_set_powergating_by_smu(adev, AMD_IP_BLOCK_TYPE_VPE, !enable, 0);
 	if (ret)
-		DRM_ERROR("Dpm %s vpe failed, ret = %d.\n",
-			  enable ? "enable" : "disable", ret);
+		drm_err(adev_to_drm(adev), "DPM %s vpe failed, ret = %d.\n",
+			enable ? "enable" : "disable", ret);
 }
 
 int amdgpu_pm_load_smu_firmware(struct amdgpu_device *adev, uint32_t *smu_version)
@@ -1188,8 +1188,11 @@ int amdgpu_dpm_get_pp_table(struct amdgpu_device *adev, char **table)
 	const struct amd_pm_funcs *pp_funcs = adev->powerplay.pp_funcs;
 	int ret = 0;
 
-	if (!pp_funcs->get_pp_table)
-		return 0;
+	if (!table)
+		return -EINVAL;
+
+	if (amdgpu_sriov_vf(adev) || !pp_funcs->get_pp_table || adev->scpm_enabled)
+		return -EOPNOTSUPP;
 
 	mutex_lock(&adev->pm.mutex);
 	ret = pp_funcs->get_pp_table(adev->powerplay.pp_handle,
@@ -1236,25 +1239,6 @@ int amdgpu_dpm_odn_edit_dpm_table(struct amdgpu_device *adev,
 					   type,
 					   input,
 					   size);
-	mutex_unlock(&adev->pm.mutex);
-
-	return ret;
-}
-
-int amdgpu_dpm_print_clock_levels(struct amdgpu_device *adev,
-				  enum pp_clock_type type,
-				  char *buf)
-{
-	const struct amd_pm_funcs *pp_funcs = adev->powerplay.pp_funcs;
-	int ret = 0;
-
-	if (!pp_funcs->print_clock_levels)
-		return 0;
-
-	mutex_lock(&adev->pm.mutex);
-	ret = pp_funcs->print_clock_levels(adev->powerplay.pp_handle,
-					   type,
-					   buf);
 	mutex_unlock(&adev->pm.mutex);
 
 	return ret;
@@ -1586,7 +1570,7 @@ int amdgpu_dpm_get_power_limit(struct amdgpu_device *adev,
 	int ret = 0;
 
 	if (!pp_funcs->get_power_limit)
-		return -ENODATA;
+		return -EOPNOTSUPP;
 
 	mutex_lock(&adev->pm.mutex);
 	ret = pp_funcs->get_power_limit(adev->powerplay.pp_handle,
@@ -1599,6 +1583,7 @@ int amdgpu_dpm_get_power_limit(struct amdgpu_device *adev,
 }
 
 int amdgpu_dpm_set_power_limit(struct amdgpu_device *adev,
+			       uint32_t limit_type,
 			       uint32_t limit)
 {
 	const struct amd_pm_funcs *pp_funcs = adev->powerplay.pp_funcs;
@@ -1609,7 +1594,7 @@ int amdgpu_dpm_set_power_limit(struct amdgpu_device *adev,
 
 	mutex_lock(&adev->pm.mutex);
 	ret = pp_funcs->set_power_limit(adev->powerplay.pp_handle,
-					limit);
+					limit_type, limit);
 	mutex_unlock(&adev->pm.mutex);
 
 	return ret;
@@ -1715,7 +1700,10 @@ int amdgpu_dpm_set_pp_table(struct amdgpu_device *adev,
 	const struct amd_pm_funcs *pp_funcs = adev->powerplay.pp_funcs;
 	int ret = 0;
 
-	if (!pp_funcs->set_pp_table)
+	if (!buf || !size)
+		return -EINVAL;
+
+	if (amdgpu_sriov_vf(adev) || !pp_funcs->set_pp_table || adev->scpm_enabled)
 		return -EOPNOTSUPP;
 
 	mutex_lock(&adev->pm.mutex);
@@ -2121,4 +2109,11 @@ ssize_t amdgpu_dpm_get_xcp_metrics(struct amdgpu_device *adev, int xcp_id,
 	mutex_unlock(&adev->pm.mutex);
 
 	return ret;
+}
+
+const struct ras_smu_drv *amdgpu_dpm_get_ras_smu_driver(struct amdgpu_device *adev)
+{
+	void *pp_handle = adev->powerplay.pp_handle;
+
+	return smu_get_ras_smu_driver(pp_handle);
 }

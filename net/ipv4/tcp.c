@@ -243,7 +243,7 @@
 
 #define pr_fmt(fmt) "TCP: " fmt
 
-#include <crypto/hash.h>
+#include <crypto/md5.h>
 #include <crypto/utils.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -254,7 +254,6 @@
 #include <linux/init.h>
 #include <linux/fs.h>
 #include <linux/skbuff.h>
-#include <linux/scatterlist.h>
 #include <linux/splice.h>
 #include <linux/net.h>
 #include <linux/socket.h>
@@ -316,15 +315,6 @@ EXPORT_SYMBOL(tcp_have_smc);
  */
 struct percpu_counter tcp_sockets_allocated ____cacheline_aligned_in_smp;
 EXPORT_IPV6_MOD(tcp_sockets_allocated);
-
-/*
- * TCP splice context
- */
-struct tcp_splice_state {
-	struct pipe_inode_info *pipe;
-	size_t len;
-	unsigned int flags;
-};
 
 /*
  * Pressure flag: try to collapse.
@@ -423,7 +413,6 @@ void tcp_md5_destruct_sock(struct sock *sk)
 		tcp_clear_md5_list(sk);
 		kfree(rcu_replace_pointer(tp->md5sig_info, NULL, 1));
 		static_branch_slow_dec_deferred(&tcp_md5_needed);
-		tcp_md5_release_sigpool();
 	}
 }
 EXPORT_IPV6_MOD_GPL(tcp_md5_destruct_sock);
@@ -519,6 +508,19 @@ static void tcp_tx_timestamp(struct sock *sk, struct sockcm_cookie *sockc)
 	    SK_BPF_CB_FLAG_TEST(sk, SK_BPF_CB_TX_TIMESTAMPING) && skb)
 		bpf_skops_tx_timestamping(sk, skb, BPF_SOCK_OPS_TSTAMP_SENDMSG_CB);
 }
+
+/* @wake is one when sk_stream_write_space() calls us.
+ * This sends EPOLLOUT only if notsent_bytes is half the limit.
+ * This mimics the strategy used in sock_def_write_space().
+ */
+bool tcp_stream_memory_free(const struct sock *sk, int wake)
+{
+	const struct tcp_sock *tp = tcp_sk(sk);
+	u32 notsent_bytes = READ_ONCE(tp->write_seq) - READ_ONCE(tp->snd_nxt);
+
+	return (notsent_bytes << wake) < tcp_notsent_lowat(tp);
+}
+EXPORT_SYMBOL(tcp_stream_memory_free);
 
 static bool tcp_stream_is_readable(struct sock *sk, int target)
 {
@@ -778,8 +780,8 @@ void tcp_push(struct sock *sk, int flags, int mss_now,
 	__tcp_push_pending_frames(sk, mss_now, nonagle);
 }
 
-static int tcp_splice_data_recv(read_descriptor_t *rd_desc, struct sk_buff *skb,
-				unsigned int offset, size_t len)
+int tcp_splice_data_recv(read_descriptor_t *rd_desc, struct sk_buff *skb,
+			 unsigned int offset, size_t len)
 {
 	struct tcp_splice_state *tss = rd_desc->arg.data;
 	int ret;
@@ -905,6 +907,33 @@ ssize_t tcp_splice_read(struct socket *sock, loff_t *ppos,
 }
 EXPORT_IPV6_MOD(tcp_splice_read);
 
+/* We allow to exceed memory limits for FIN packets to expedite
+ * connection tear down and (memory) recovery.
+ * Otherwise tcp_send_fin() could be tempted to either delay FIN
+ * or even be forced to close flow without any FIN.
+ * In general, we want to allow one skb per socket to avoid hangs
+ * with edge trigger epoll()
+ */
+void sk_forced_mem_schedule(struct sock *sk, int size)
+{
+	int delta, amt;
+
+	delta = size - sk->sk_forward_alloc;
+	if (delta <= 0)
+		return;
+
+	amt = sk_mem_pages(delta);
+	sk_forward_alloc_add(sk, amt << PAGE_SHIFT);
+
+	if (mem_cgroup_sk_enabled(sk))
+		mem_cgroup_sk_charge(sk, amt, gfp_memcg_charge() | __GFP_NOFAIL);
+
+	if (sk->sk_bypass_prot_mem)
+		return;
+
+	sk_memory_allocated_add(sk, amt);
+}
+
 struct sk_buff *tcp_stream_alloc_skb(struct sock *sk, gfp_t gfp,
 				     bool force_schedule)
 {
@@ -929,7 +958,8 @@ struct sk_buff *tcp_stream_alloc_skb(struct sock *sk, gfp_t gfp,
 		}
 		__kfree_skb(skb);
 	} else {
-		sk->sk_prot->enter_memory_pressure(sk);
+		if (!sk->sk_bypass_prot_mem)
+			tcp_enter_memory_pressure(sk);
 		sk_stream_moderate_sndbuf(sk);
 	}
 	return NULL;
@@ -1045,8 +1075,8 @@ int tcp_sendmsg_fastopen(struct sock *sk, struct msghdr *msg, int *copied,
 	if (tp->fastopen_req)
 		return -EALREADY; /* Another Fast Open is in progress */
 
-	tp->fastopen_req = kzalloc(sizeof(struct tcp_fastopen_request),
-				   sk->sk_allocation);
+	tp->fastopen_req = kzalloc_obj(struct tcp_fastopen_request,
+				       sk->sk_allocation);
 	if (unlikely(!tp->fastopen_req))
 		return -ENOBUFS;
 	tp->fastopen_req->data = msg;
@@ -1063,7 +1093,7 @@ int tcp_sendmsg_fastopen(struct sock *sk, struct msghdr *msg, int *copied,
 		}
 	}
 	flags = (msg->msg_flags & MSG_DONTWAIT) ? O_NONBLOCK : 0;
-	err = __inet_stream_connect(sk->sk_socket, uaddr,
+	err = __inet_stream_connect(sk->sk_socket, (struct sockaddr_unsized *)uaddr,
 				    msg->msg_namelen, flags, 1);
 	/* fastopen_req could already be freed in __inet_stream_connect
 	 * if the connection times out or gets rst
@@ -1075,6 +1105,24 @@ int tcp_sendmsg_fastopen(struct sock *sk, struct msghdr *msg, int *copied,
 	}
 	return err;
 }
+
+/* If a gap is detected between sends, mark the socket application-limited. */
+void tcp_rate_check_app_limited(struct sock *sk)
+{
+	struct tcp_sock *tp = tcp_sk(sk);
+
+	if (/* We have less than one packet to send. */
+	    tp->write_seq - tp->snd_nxt < tp->mss_cache &&
+	    /* Nothing in sending host's qdisc queues or NIC tx queue. */
+	    sk_wmem_alloc_get(sk) < SKB_TRUESIZE(1) &&
+	    /* We are not limited by CWND. */
+	    tcp_packets_in_flight(tp) < tcp_snd_cwnd(tp) &&
+	    /* All lost packets have been retransmitted. */
+	    tp->lost_out <= tp->retrans_out)
+		tp->app_limited =
+			(tp->delivered + tcp_packets_in_flight(tp)) ? : 1;
+}
+EXPORT_SYMBOL_GPL(tcp_rate_check_app_limited);
 
 int tcp_sendmsg_locked(struct sock *sk, struct msghdr *msg, size_t size)
 {
@@ -1558,8 +1606,10 @@ void __tcp_cleanup_rbuf(struct sock *sk, int copied)
 				time_to_ack = true;
 		}
 	}
-	if (time_to_ack)
+	if (time_to_ack) {
+		tcp_mstamp_refresh(tp);
 		tcp_send_ack(sk);
+	}
 }
 
 void tcp_cleanup_rbuf(struct sock *sk, int copied)
@@ -2587,7 +2637,7 @@ static int tcp_recvmsg_dmabuf(struct sock *sk, const struct sk_buff *skb,
 				if (err)
 					goto out;
 
-				atomic_long_inc(&niov->pp_ref_count);
+				atomic_long_inc(&niov->desc.pp_ref_count);
 				tcp_xa_pool.netmems[tcp_xa_pool.idx++] = skb_frag_netmem(frag);
 
 				sent += copy;
@@ -3418,6 +3468,7 @@ int tcp_disconnect(struct sock *sk, int flags)
 	tcp_accecn_init_counters(tp);
 	tp->prev_ecnfield = 0;
 	tp->accecn_opt_tstamp = 0;
+	tp->pkts_acked_ewma = 0;
 	if (icsk->icsk_ca_initialized && icsk->icsk_ca_ops->release)
 		icsk->icsk_ca_ops->release(sk);
 	memset(icsk->icsk_ca_priv, 0, sizeof(icsk->icsk_ca_priv));
@@ -4327,6 +4378,14 @@ void tcp_get_info(struct sock *sk, struct tcp_info *info)
 	if (tp->rto_stamp)
 		info->tcpi_total_rto_time += tcp_clock_ms() - tp->rto_stamp;
 
+	if (tcp_ecn_disabled(tp))
+		info->tcpi_ecn_mode = TCPI_ECN_MODE_DISABLED;
+	else if (tcp_ecn_mode_rfc3168(tp))
+		info->tcpi_ecn_mode = TCPI_ECN_MODE_RFC3168;
+	else if (tcp_ecn_mode_accecn(tp))
+		info->tcpi_ecn_mode = TCPI_ECN_MODE_ACCECN;
+	else if (tcp_ecn_mode_pending(tp))
+		info->tcpi_ecn_mode = TCPI_ECN_MODE_PENDING;
 	info->tcpi_accecn_fail_mode = tp->accecn_fail_mode;
 	info->tcpi_accecn_opt_seen = tp->saw_accecn_opt;
 	info->tcpi_received_ce = tp->received_ce;
@@ -4849,52 +4908,45 @@ int tcp_getsockopt(struct sock *sk, int level, int optname, char __user *optval,
 EXPORT_IPV6_MOD(tcp_getsockopt);
 
 #ifdef CONFIG_TCP_MD5SIG
-int tcp_md5_sigpool_id = -1;
-EXPORT_IPV6_MOD_GPL(tcp_md5_sigpool_id);
-
-int tcp_md5_alloc_sigpool(void)
+void tcp_md5_hash_skb_data(struct md5_ctx *ctx, const struct sk_buff *skb,
+			   unsigned int header_len)
 {
-	size_t scratch_size;
-	int ret;
+	const unsigned int head_data_len = skb_headlen(skb) > header_len ?
+					   skb_headlen(skb) - header_len : 0;
+	const struct skb_shared_info *shi = skb_shinfo(skb);
+	struct sk_buff *frag_iter;
+	unsigned int i;
 
-	scratch_size = sizeof(union tcp_md5sum_block) + sizeof(struct tcphdr);
-	ret = tcp_sigpool_alloc_ahash("md5", scratch_size);
-	if (ret >= 0) {
-		/* As long as any md5 sigpool was allocated, the return
-		 * id would stay the same. Re-write the id only for the case
-		 * when previously all MD5 keys were deleted and this call
-		 * allocates the first MD5 key, which may return a different
-		 * sigpool id than was used previously.
-		 */
-		WRITE_ONCE(tcp_md5_sigpool_id, ret); /* Avoids the compiler potentially being smart here */
-		return 0;
+	md5_update(ctx, (const u8 *)tcp_hdr(skb) + header_len, head_data_len);
+
+	for (i = 0; i < shi->nr_frags; ++i) {
+		const skb_frag_t *f = &shi->frags[i];
+		u32 p_off, p_len, copied;
+		const void *vaddr;
+		struct page *p;
+
+		skb_frag_foreach_page(f, skb_frag_off(f), skb_frag_size(f),
+				      p, p_off, p_len, copied) {
+			vaddr = kmap_local_page(p);
+			md5_update(ctx, vaddr + p_off, p_len);
+			kunmap_local(vaddr);
+		}
 	}
-	return ret;
-}
 
-void tcp_md5_release_sigpool(void)
-{
-	tcp_sigpool_release(READ_ONCE(tcp_md5_sigpool_id));
+	skb_walk_frags(skb, frag_iter)
+		tcp_md5_hash_skb_data(ctx, frag_iter, 0);
 }
+EXPORT_IPV6_MOD(tcp_md5_hash_skb_data);
 
-void tcp_md5_add_sigpool(void)
-{
-	tcp_sigpool_get(READ_ONCE(tcp_md5_sigpool_id));
-}
-
-int tcp_md5_hash_key(struct tcp_sigpool *hp,
-		     const struct tcp_md5sig_key *key)
+void tcp_md5_hash_key(struct md5_ctx *ctx,
+		      const struct tcp_md5sig_key *key)
 {
 	u8 keylen = READ_ONCE(key->keylen); /* paired with WRITE_ONCE() in tcp_md5_do_add */
-	struct scatterlist sg;
-
-	sg_init_one(&sg, key->key, keylen);
-	ahash_request_set_crypt(hp->req, &sg, NULL, keylen);
 
 	/* We use data_race() because tcp_md5_do_add() might change
 	 * key->key under us
 	 */
-	return data_race(crypto_ahash_update(hp->req));
+	data_race(({ md5_update(ctx, key->key, keylen), 0; }));
 }
 EXPORT_IPV6_MOD(tcp_md5_hash_key);
 
@@ -4905,19 +4957,16 @@ tcp_inbound_md5_hash(const struct sock *sk, const struct sk_buff *skb,
 		     int family, int l3index, const __u8 *hash_location)
 {
 	/* This gets called for each TCP segment that has TCP-MD5 option.
-	 * We have 3 drop cases:
-	 * o No MD5 hash and one expected.
-	 * o MD5 hash and we're not expecting one.
-	 * o MD5 hash and its wrong.
+	 * We have 2 drop cases:
+	 * o An MD5 signature is present, but we're not expecting one.
+	 * o The MD5 signature is wrong.
 	 */
 	const struct tcp_sock *tp = tcp_sk(sk);
 	struct tcp_md5sig_key *key;
 	u8 newhash[16];
-	int genhash;
 
 	key = tcp_md5_do_lookup(sk, l3index, saddr, family);
-
-	if (!key && hash_location) {
+	if (!key) {
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPMD5UNEXPECTED);
 		trace_tcp_hash_md5_unexpected(sk, skb);
 		return SKB_DROP_REASON_TCP_MD5UNEXPECTED;
@@ -4928,11 +4977,10 @@ tcp_inbound_md5_hash(const struct sock *sk, const struct sk_buff *skb,
 	 * IPv4-mapped case.
 	 */
 	if (family == AF_INET)
-		genhash = tcp_v4_md5_hash_skb(newhash, key, NULL, skb);
+		tcp_v4_md5_hash_skb(newhash, key, NULL, skb);
 	else
-		genhash = tp->af_specific->calc_md5_hash(newhash, key,
-							 NULL, skb);
-	if (genhash || crypto_memneq(hash_location, newhash, 16)) {
+		tp->af_specific->calc_md5_hash(newhash, key, NULL, skb);
+	if (crypto_memneq(hash_location, newhash, 16)) {
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPMD5FAILURE);
 		trace_tcp_hash_md5_mismatch(sk, skb);
 		return SKB_DROP_REASON_TCP_MD5FAILURE;
@@ -5214,6 +5262,7 @@ static void __init tcp_struct_check(void)
 	CACHELINE_ASSERT_GROUP_MEMBER(struct tcp_sock, tcp_sock_write_rx, rate_interval_us);
 	CACHELINE_ASSERT_GROUP_MEMBER(struct tcp_sock, tcp_sock_write_rx, rcv_rtt_last_tsecr);
 	CACHELINE_ASSERT_GROUP_MEMBER(struct tcp_sock, tcp_sock_write_rx, delivered_ecn_bytes);
+	CACHELINE_ASSERT_GROUP_MEMBER(struct tcp_sock, tcp_sock_write_rx, pkts_acked_ewma);
 	CACHELINE_ASSERT_GROUP_MEMBER(struct tcp_sock, tcp_sock_write_rx, first_tx_mstamp);
 	CACHELINE_ASSERT_GROUP_MEMBER(struct tcp_sock, tcp_sock_write_rx, delivered_mstamp);
 	CACHELINE_ASSERT_GROUP_MEMBER(struct tcp_sock, tcp_sock_write_rx, bytes_acked);

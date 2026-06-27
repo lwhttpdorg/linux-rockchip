@@ -305,9 +305,7 @@ static void timerlat_hist_header(struct osnoise_tool *tool)
 	if (!params->common.hist.no_index)
 		trace_seq_printf(s, "Index");
 
-	for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-		if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-			continue;
+	for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 		if (!data->hist[cpu].irq_count && !data->hist[cpu].thread_count)
 			continue;
@@ -359,9 +357,7 @@ timerlat_print_summary(struct timerlat_params *params,
 	if (!params->common.hist.no_index)
 		trace_seq_printf(trace->seq, "count:");
 
-	for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-		if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-			continue;
+	for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 		if (!data->hist[cpu].irq_count && !data->hist[cpu].thread_count)
 			continue;
@@ -383,9 +379,7 @@ timerlat_print_summary(struct timerlat_params *params,
 	if (!params->common.hist.no_index)
 		trace_seq_printf(trace->seq, "min:  ");
 
-	for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-		if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-			continue;
+	for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 		if (!data->hist[cpu].irq_count && !data->hist[cpu].thread_count)
 			continue;
@@ -413,9 +407,7 @@ timerlat_print_summary(struct timerlat_params *params,
 	if (!params->common.hist.no_index)
 		trace_seq_printf(trace->seq, "avg:  ");
 
-	for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-		if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-			continue;
+	for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 		if (!data->hist[cpu].irq_count && !data->hist[cpu].thread_count)
 			continue;
@@ -443,9 +435,7 @@ timerlat_print_summary(struct timerlat_params *params,
 	if (!params->common.hist.no_index)
 		trace_seq_printf(trace->seq, "max:  ");
 
-	for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-		if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-			continue;
+	for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 		if (!data->hist[cpu].irq_count && !data->hist[cpu].thread_count)
 			continue;
@@ -490,9 +480,7 @@ timerlat_print_stats_all(struct timerlat_params *params,
 	sum.min_thread = ~0;
 	sum.min_user = ~0;
 
-	for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-		if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-			continue;
+	for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 		if (!data->hist[cpu].irq_count && !data->hist[cpu].thread_count)
 			continue;
@@ -639,9 +627,7 @@ timerlat_print_stats(struct osnoise_tool *tool)
 			trace_seq_printf(trace->seq, "%-6d",
 					 bucket * data->bucket_size);
 
-		for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-			if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-				continue;
+		for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 			if (!data->hist[cpu].irq_count && !data->hist[cpu].thread_count)
 				continue;
@@ -679,9 +665,7 @@ timerlat_print_stats(struct osnoise_tool *tool)
 	if (!params->common.hist.no_index)
 		trace_seq_printf(trace->seq, "over: ");
 
-	for (cpu = 0; cpu < data->nr_cpus; cpu++) {
-		if (params->common.cpus && !CPU_ISSET(cpu, &params->common.monitored_cpus))
-			continue;
+	for_each_monitored_cpu(cpu, data->nr_cpus, &params->common) {
 
 		if (!data->hist[cpu].irq_count && !data->hist[cpu].thread_count)
 			continue;
@@ -710,19 +694,18 @@ timerlat_print_stats(struct osnoise_tool *tool)
 /*
  * timerlat_hist_usage - prints timerlat top usage message
  */
-static void timerlat_hist_usage(char *usage)
+static void timerlat_hist_usage(void)
 {
-	int i;
-
-	char *msg[] = {
-		"",
-		"  usage: [rtla] timerlat hist [-h] [-q] [-d s] [-D] [-n] [-a us] [-p us] [-i us] [-T us] [-s us] \\",
+	static const char * const msg_start[] = {
+		"[-d s] [-D] [-n] [-a us] [-p us] [-i us] [-T us] [-s us] \\",
 		"         [-t [file]] [-e sys[:event]] [--filter <filter>] [--trigger <trigger>] [-c cpu-list] [-H cpu-list]\\",
 		"	  [-P priority] [-E N] [-b N] [--no-irq] [--no-thread] [--no-header] [--no-summary] \\",
 		"	  [--no-index] [--with-zeros] [--dma-latency us] [-C [cgroup_name]] [--no-aa] [--dump-task] [-u|-k]",
 		"	  [--warm-up s] [--deepest-idle-state n]",
-		"",
-		"	  -h/--help: print this menu",
+		NULL,
+	};
+
+	static const char * const msg_opts[] = {
 		"	  -a/--auto: set automatic trace mode, stopping the session if argument in us latency is hit",
 		"	  -p/--period us: timerlat period in us",
 		"	  -i/--irq us: stop trace if the irq latency is higher than the argument in us",
@@ -763,22 +746,12 @@ static void timerlat_hist_usage(char *usage)
 		"	     --deepest-idle-state n: only go down to idle state n on cpus used by timerlat to reduce exit from idle latency",
 		"	     --on-threshold <action>: define action to be executed at latency threshold, multiple are allowed",
 		"	     --on-end <action>: define action to be executed at measurement end, multiple are allowed",
+		"	     --bpf-action <program>: load and execute BPF program when latency threshold is exceeded",
 		NULL,
 	};
 
-	if (usage)
-		fprintf(stderr, "%s\n", usage);
-
-	fprintf(stderr, "rtla timerlat hist: a per-cpu histogram of the timer latency (version %s)\n",
-			VERSION);
-
-	for (i = 0; msg[i]; i++)
-		fprintf(stderr, "%s\n", msg[i]);
-
-	if (usage)
-		exit(EXIT_FAILURE);
-
-	exit(EXIT_SUCCESS);
+	common_usage("timerlat", "hist", "a per-cpu histogram of the timer latency",
+		     msg_start, msg_opts);
 }
 
 /*
@@ -788,7 +761,6 @@ static struct common_params
 *timerlat_hist_parse_args(int argc, char *argv[])
 {
 	struct timerlat_params *params;
-	struct trace_events *tevent;
 	int auto_thresh;
 	int retval;
 	int c;
@@ -817,26 +789,20 @@ static struct common_params
 
 	while (1) {
 		static struct option long_options[] = {
+			COMMON_OPTIONS,
 			{"auto",		required_argument,	0, 'a'},
-			{"cpus",		required_argument,	0, 'c'},
-			{"cgroup",		optional_argument,	0, 'C'},
 			{"bucket-size",		required_argument,	0, 'b'},
-			{"debug",		no_argument,		0, 'D'},
 			{"entries",		required_argument,	0, 'E'},
-			{"duration",		required_argument,	0, 'd'},
-			{"house-keeping",	required_argument,	0, 'H'},
 			{"help",		no_argument,		0, 'h'},
 			{"irq",			required_argument,	0, 'i'},
 			{"nano",		no_argument,		0, 'n'},
 			{"period",		required_argument,	0, 'p'},
-			{"priority",		required_argument,	0, 'P'},
 			{"stack",		required_argument,	0, 's'},
 			{"thread",		required_argument,	0, 'T'},
 			{"trace",		optional_argument,	0, 't'},
 			{"user-threads",	no_argument,		0, 'u'},
 			{"kernel-threads",	no_argument,		0, 'k'},
 			{"user-load",		no_argument,		0, 'U'},
-			{"event",		required_argument,	0, 'e'},
 			{"no-irq",		no_argument,		0, '0'},
 			{"no-thread",		no_argument,		0, '1'},
 			{"no-header",		no_argument,		0, '2'},
@@ -853,14 +819,14 @@ static struct common_params
 			{"deepest-idle-state",	required_argument,	0, '\4'},
 			{"on-threshold",	required_argument,	0, '\5'},
 			{"on-end",		required_argument,	0, '\6'},
+			{"bpf-action",		required_argument,	0, '\7'},
 			{0, 0, 0, 0}
 		};
 
-		/* getopt_long stores the option index here. */
-		int option_index = 0;
+		c = getopt_auto(argc, argv, long_options);
 
-		c = getopt_long(argc, argv, "a:c:C::b:d:e:E:DhH:i:knp:P:s:t::T:uU0123456:7:8:9\1\2:\3:",
-				 long_options, &option_index);
+		if (set_common_option(c, argc, argv, &params->common))
+			continue;
 
 		/* detect the end of the options. */
 		if (c == -1)
@@ -882,59 +848,21 @@ static struct common_params
 				trace_output = "timerlat_trace.txt";
 
 			break;
-		case 'c':
-			retval = parse_cpu_set(optarg, &params->common.monitored_cpus);
-			if (retval)
-				timerlat_hist_usage("\nInvalid -c cpu list\n");
-			params->common.cpus = optarg;
-			break;
-		case 'C':
-			params->common.cgroup = 1;
-			params->common.cgroup_name = parse_optional_arg(argc, argv);
-			break;
 		case 'b':
 			params->common.hist.bucket_size = get_llong_from_str(optarg);
 			if (params->common.hist.bucket_size == 0 ||
 			    params->common.hist.bucket_size >= 1000000)
-				timerlat_hist_usage("Bucket size needs to be > 0 and <= 1000000\n");
-			break;
-		case 'D':
-			config_debug = 1;
-			break;
-		case 'd':
-			params->common.duration = parse_seconds_duration(optarg);
-			if (!params->common.duration)
-				timerlat_hist_usage("Invalid -D duration\n");
-			break;
-		case 'e':
-			tevent = trace_event_alloc(optarg);
-			if (!tevent) {
-				err_msg("Error alloc trace event");
-				exit(EXIT_FAILURE);
-			}
-
-			if (params->common.events)
-				tevent->next = params->common.events;
-
-			params->common.events = tevent;
+				fatal("Bucket size needs to be > 0 and <= 1000000");
 			break;
 		case 'E':
 			params->common.hist.entries = get_llong_from_str(optarg);
 			if (params->common.hist.entries < 10 ||
 			    params->common.hist.entries > 9999999)
-				timerlat_hist_usage("Entries must be > 10 and < 9999999\n");
+				fatal("Entries must be > 10 and < 9999999");
 			break;
 		case 'h':
 		case '?':
-			timerlat_hist_usage(NULL);
-			break;
-		case 'H':
-			params->common.hk_cpus = 1;
-			retval = parse_cpu_set(optarg, &params->common.hk_cpu_set);
-			if (retval) {
-				err_msg("Error parsing house keeping CPUs\n");
-				exit(EXIT_FAILURE);
-			}
+			timerlat_hist_usage();
 			break;
 		case 'i':
 			params->common.stop_us = get_llong_from_str(optarg);
@@ -948,13 +876,7 @@ static struct common_params
 		case 'p':
 			params->timerlat_period_us = get_llong_from_str(optarg);
 			if (params->timerlat_period_us > 1000000)
-				timerlat_hist_usage("Period longer than 1 s\n");
-			break;
-		case 'P':
-			retval = parse_prio(optarg, &params->common.sched_param);
-			if (retval == -1)
-				timerlat_hist_usage("Invalid -P priority");
-			params->common.set_sched = 1;
+				fatal("Period longer than 1 s");
 			break;
 		case 's':
 			params->print_stack = get_llong_from_str(optarg);
@@ -994,31 +916,25 @@ static struct common_params
 		case '6': /* trigger */
 			if (params->common.events) {
 				retval = trace_event_add_trigger(params->common.events, optarg);
-				if (retval) {
-					err_msg("Error adding trigger %s\n", optarg);
-					exit(EXIT_FAILURE);
-				}
+				if (retval)
+					fatal("Error adding trigger %s", optarg);
 			} else {
-				timerlat_hist_usage("--trigger requires a previous -e\n");
+				fatal("--trigger requires a previous -e");
 			}
 			break;
 		case '7': /* filter */
 			if (params->common.events) {
 				retval = trace_event_add_filter(params->common.events, optarg);
-				if (retval) {
-					err_msg("Error adding filter %s\n", optarg);
-					exit(EXIT_FAILURE);
-				}
+				if (retval)
+					fatal("Error adding filter %s", optarg);
 			} else {
-				timerlat_hist_usage("--filter requires a previous -e\n");
+				fatal("--filter requires a previous -e");
 			}
 			break;
 		case '8':
 			params->dma_latency = get_llong_from_str(optarg);
-			if (params->dma_latency < 0 || params->dma_latency > 10000) {
-				err_msg("--dma-latency needs to be >= 0 and < 10000");
-				exit(EXIT_FAILURE);
-			}
+			if (params->dma_latency < 0 || params->dma_latency > 10000)
+				fatal("--dma-latency needs to be >= 0 and < 10000");
 			break;
 		case '9':
 			params->no_aa = 1;
@@ -1038,37 +954,34 @@ static struct common_params
 		case '\5':
 			retval = actions_parse(&params->common.threshold_actions, optarg,
 					       "timerlat_trace.txt");
-			if (retval) {
-				err_msg("Invalid action %s\n", optarg);
-				exit(EXIT_FAILURE);
-			}
+			if (retval)
+				fatal("Invalid action %s", optarg);
 			break;
 		case '\6':
 			retval = actions_parse(&params->common.end_actions, optarg,
 					       "timerlat_trace.txt");
-			if (retval) {
-				err_msg("Invalid action %s\n", optarg);
-				exit(EXIT_FAILURE);
-			}
+			if (retval)
+				fatal("Invalid action %s", optarg);
+			break;
+		case '\7':
+			params->bpf_action_program = optarg;
 			break;
 		default:
-			timerlat_hist_usage("Invalid option");
+			fatal("Invalid option");
 		}
 	}
 
 	if (trace_output)
 		actions_add_trace_output(&params->common.threshold_actions, trace_output);
 
-	if (geteuid()) {
-		err_msg("rtla needs root permission\n");
-		exit(EXIT_FAILURE);
-	}
+	if (geteuid())
+		fatal("rtla needs root permission");
 
 	if (params->common.hist.no_irq && params->common.hist.no_thread)
-		timerlat_hist_usage("no-irq and no-thread set, there is nothing to do here");
+		fatal("no-irq and no-thread set, there is nothing to do here");
 
 	if (params->common.hist.no_index && !params->common.hist.with_zeros)
-		timerlat_hist_usage("no-index set with with-zeros is not set - it does not make sense");
+		fatal("no-index set with with-zeros is not set - it does not make sense");
 
 	/*
 	 * Auto analysis only happens if stop tracing, thus:
@@ -1077,7 +990,7 @@ static struct common_params
 		params->no_aa = 1;
 
 	if (params->common.kernel_workload && params->common.user_workload)
-		timerlat_hist_usage("--kernel-threads and --user-threads are mutually exclusive!");
+		fatal("--kernel-threads and --user-threads are mutually exclusive!");
 
 	/*
 	 * If auto-analysis or trace output is enabled, switch from BPF mode to

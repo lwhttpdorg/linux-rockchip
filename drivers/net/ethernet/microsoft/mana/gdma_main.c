@@ -634,7 +634,7 @@ static void mana_gd_process_eqe(struct gdma_queue *eq)
 			break;
 		}
 
-		mns_wk = kzalloc(sizeof(*mns_wk), GFP_ATOMIC);
+		mns_wk = kzalloc_obj(*mns_wk, GFP_ATOMIC);
 		if (!mns_wk) {
 			module_put(THIS_MODULE);
 			break;
@@ -923,7 +923,7 @@ int mana_gd_create_hwc_queue(struct gdma_dev *gd,
 	struct gdma_queue *queue;
 	int err;
 
-	queue = kzalloc(sizeof(*queue), GFP_KERNEL);
+	queue = kzalloc_obj(*queue);
 	if (!queue)
 		return -ENOMEM;
 
@@ -1062,7 +1062,7 @@ int mana_gd_create_mana_eq(struct gdma_dev *gd,
 	if (spec->type != GDMA_EQ)
 		return -EINVAL;
 
-	queue = kzalloc(sizeof(*queue), GFP_KERNEL);
+	queue = kzalloc_obj(*queue);
 	if (!queue)
 		return -ENOMEM;
 
@@ -1115,7 +1115,7 @@ int mana_gd_create_mana_wq_cq(struct gdma_dev *gd,
 	    spec->type != GDMA_RQ)
 		return -EINVAL;
 
-	queue = kzalloc(sizeof(*queue), GFP_KERNEL);
+	queue = kzalloc_obj(*queue);
 	if (!queue)
 		return -ENOMEM;
 
@@ -1383,7 +1383,6 @@ int mana_gd_post_work_request(struct gdma_queue *wq,
 			      struct gdma_posted_wqe_info *wqe_info)
 {
 	u32 client_oob_size = wqe_req->inline_oob_size;
-	struct gdma_context *gc;
 	u32 sgl_data_size;
 	u32 max_wqe_size;
 	u32 wqe_size;
@@ -1413,11 +1412,8 @@ int mana_gd_post_work_request(struct gdma_queue *wq,
 	if (wqe_size > max_wqe_size)
 		return -EINVAL;
 
-	if (wq->monitor_avl_buf && wqe_size > mana_gd_wq_avail_space(wq)) {
-		gc = wq->gdma_dev->gdma_context;
-		dev_err(gc->dev, "unsuccessful flow control!\n");
+	if (wq->monitor_avl_buf && wqe_size > mana_gd_wq_avail_space(wq))
 		return -ENOSPC;
-	}
 
 	if (wqe_info)
 		wqe_info->wqe_size_in_bu = wqe_size / GDMA_WQE_BU_SIZE;
@@ -1629,7 +1625,7 @@ static int mana_gd_setup_dyn_irqs(struct pci_dev *pdev, int nvec)
 	bool skip_first_cpu = false;
 	int *irqs, irq, err, i;
 
-	irqs = kmalloc_array(nvec, sizeof(int), GFP_KERNEL);
+	irqs = kmalloc_objs(int, nvec);
 	if (!irqs)
 		return -ENOMEM;
 
@@ -1640,7 +1636,7 @@ static int mana_gd_setup_dyn_irqs(struct pci_dev *pdev, int nvec)
 	 * further used in irq_setup()
 	 */
 	for (i = 1; i <= nvec; i++) {
-		gic = kzalloc(sizeof(*gic), GFP_KERNEL);
+		gic = kzalloc_obj(*gic);
 		if (!gic) {
 			err = -ENOMEM;
 			goto free_irq;
@@ -1711,14 +1707,14 @@ static int mana_gd_setup_irqs(struct pci_dev *pdev, int nvec)
 	unsigned int cpu;
 	int err, i;
 
-	irqs = kmalloc_array(nvec, sizeof(int), GFP_KERNEL);
+	irqs = kmalloc_objs(int, nvec);
 	if (!irqs)
 		return -ENOMEM;
 
 	start_irqs = irqs;
 
 	for (i = 0; i < nvec; i++) {
-		gic = kzalloc(sizeof(*gic), GFP_KERNEL);
+		gic = kzalloc_obj(*gic);
 		if (!gic) {
 			err = -ENOMEM;
 			goto free_irq;
@@ -2076,7 +2072,7 @@ disable_dev:
 
 		dev_info(&pdev->dev, "Start MANA recovery mode\n");
 
-		dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+		dev = kzalloc_obj(*dev);
 		if (!dev)
 			return err;
 

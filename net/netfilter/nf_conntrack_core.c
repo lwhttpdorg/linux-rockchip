@@ -536,7 +536,7 @@ struct nf_conn *nf_ct_tmpl_alloc(struct net *net,
 		if (tmpl != p)
 			tmpl->proto.tmpl_padto = (char *)tmpl - (char *)p;
 	} else {
-		tmpl = kzalloc(sizeof(*tmpl), flags);
+		tmpl = kzalloc_obj(*tmpl, flags);
 		if (!tmpl)
 			return NULL;
 	}
@@ -1668,7 +1668,7 @@ __nf_conntrack_alloc(struct net *net,
 	/* We don't want any race condition at early drop stage */
 	ct_count = atomic_inc_return(&cnet->count);
 
-	if (nf_conntrack_max && unlikely(ct_count > nf_conntrack_max)) {
+	if (unlikely(ct_count > nf_conntrack_max)) {
 		if (!early_drop(net, hash)) {
 			if (!conntrack_gc_work.early_drop)
 				conntrack_gc_work.early_drop = true;
@@ -1814,14 +1814,17 @@ init_conntrack(struct net *net, struct nf_conn *tmpl,
 		spin_lock_bh(&nf_conntrack_expect_lock);
 		exp = nf_ct_find_expectation(net, zone, tuple, !tmpl || nf_ct_is_confirmed(tmpl));
 		if (exp) {
+			struct nf_conntrack_helper *assign_helper;
+
 			/* Welcome, Mr. Bond.  We've been expecting you... */
 			__set_bit(IPS_EXPECTED_BIT, &ct->status);
 			/* exp->master safe, refcnt bumped in nf_ct_find_expectation */
 			ct->master = exp->master;
-			if (exp->helper) {
+			assign_helper = rcu_dereference(exp->assign_helper);
+			if (assign_helper) {
 				help = nf_ct_helper_ext_add(ct, GFP_ATOMIC);
 				if (help)
-					rcu_assign_pointer(help->helper, exp->helper);
+					rcu_assign_pointer(help->helper, assign_helper);
 			}
 
 #ifdef CONFIG_NF_CONNTRACK_MARK
@@ -2487,6 +2490,7 @@ void nf_conntrack_cleanup_net(struct net *net)
 void nf_conntrack_cleanup_net_list(struct list_head *net_exit_list)
 {
 	struct nf_ct_iter_data iter_data = {};
+	unsigned long start = jiffies;
 	struct net *net;
 	int busy;
 
@@ -2507,6 +2511,8 @@ i_see_dead_people:
 			busy = 1;
 	}
 	if (busy) {
+		DEBUG_NET_WARN_ONCE(time_after(jiffies, start + 60 * HZ),
+				    "conntrack cleanup blocked for 60s");
 		schedule();
 		goto i_see_dead_people;
 	}
@@ -2532,7 +2538,7 @@ void *nf_ct_alloc_hashtable(unsigned int *sizep, int nulls)
 	if (nr_slots > (INT_MAX / sizeof(struct hlist_nulls_head)))
 		return NULL;
 
-	hash = kvcalloc(nr_slots, sizeof(struct hlist_nulls_head), GFP_KERNEL);
+	hash = kvzalloc_objs(struct hlist_nulls_head, nr_slots);
 
 	if (hash && nulls)
 		for (i = 0; i < nr_slots; i++)

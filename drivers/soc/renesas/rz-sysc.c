@@ -5,6 +5,7 @@
  * Copyright (C) 2024 Renesas Electronics Corp.
  */
 
+#include <linux/bitfield.h>
 #include <linux/cleanup.h>
 #include <linux/io.h>
 #include <linux/mfd/syscon.h>
@@ -15,8 +16,6 @@
 #include <linux/sys_soc.h>
 
 #include "rz-sysc.h"
-
-#define field_get(_mask, _reg) (((_reg) & (_mask)) >> (ffs(_mask) - 1))
 
 /**
  * struct rz_sysc - RZ SYSC private data structure
@@ -111,7 +110,7 @@ static int rz_sysc_probe(struct platform_device *pdev)
 	struct rz_sysc *sysc;
 	int ret;
 
-	struct regmap_config *regmap_cfg __free(kfree) = kzalloc(sizeof(*regmap_cfg), GFP_KERNEL);
+	struct regmap_config *regmap_cfg __free(kfree) = kzalloc_obj(*regmap_cfg);
 	if (!regmap_cfg)
 		return -ENOMEM;
 

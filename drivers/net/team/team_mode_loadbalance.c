@@ -259,7 +259,7 @@ static int __fprog_create(struct sock_fprog_kern **pfprog, u32 data_len,
 
 	if (data_len % sizeof(struct sock_filter))
 		return -EINVAL;
-	fprog = kmalloc(sizeof(*fprog), GFP_KERNEL);
+	fprog = kmalloc_obj(*fprog);
 	if (!fprog)
 		return -ENOMEM;
 	fprog->filter = kmemdup(filter, data_len, GFP_KERNEL);
@@ -594,7 +594,7 @@ static int lb_init(struct team *team)
 	BUG_ON(!func);
 	rcu_assign_pointer(lb_priv->select_tx_port_func, func);
 
-	lb_priv->ex = kzalloc(sizeof(*lb_priv->ex), GFP_KERNEL);
+	lb_priv->ex = kzalloc_obj(*lb_priv->ex);
 	if (!lb_priv->ex)
 		return -ENOMEM;
 	lb_priv->ex->team = team;
@@ -655,7 +655,7 @@ static void lb_port_leave(struct team *team, struct team_port *port)
 	free_percpu(lb_port_priv->pcpu_stats);
 }
 
-static void lb_port_tx_disabled(struct team *team, struct team_port *port)
+static void lb_port_disabled(struct team *team, struct team_port *port)
 {
 	lb_tx_hash_to_port_mapping_null_port(team, port);
 }
@@ -665,7 +665,7 @@ static const struct team_mode_ops lb_mode_ops = {
 	.exit			= lb_exit,
 	.port_enter		= lb_port_enter,
 	.port_leave		= lb_port_leave,
-	.port_tx_disabled	= lb_port_tx_disabled,
+	.port_disabled		= lb_port_disabled,
 	.receive		= lb_receive,
 	.transmit		= lb_transmit,
 };

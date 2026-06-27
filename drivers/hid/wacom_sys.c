@@ -898,7 +898,7 @@ static int wacom_add_shared_data(struct hid_device *hdev)
 
 	data = wacom_get_hdev_data(hdev);
 	if (!data) {
-		data = kzalloc(sizeof(struct wacom_hdev_data), GFP_KERNEL);
+		data = kzalloc_obj(struct wacom_hdev_data);
 		if (!data) {
 			mutex_unlock(&wacom_udev_list_lock);
 			return -ENOMEM;
@@ -2928,7 +2928,6 @@ static void wacom_remove(struct hid_device *hdev)
 		wacom_release_resources(wacom);
 }
 
-#ifdef CONFIG_PM
 static int wacom_resume(struct hid_device *hdev)
 {
 	struct wacom *wacom = hid_get_drvdata(hdev);
@@ -2948,7 +2947,6 @@ static int wacom_reset_resume(struct hid_device *hdev)
 {
 	return wacom_resume(hdev);
 }
-#endif /* CONFIG_PM */
 
 static struct hid_driver wacom_driver = {
 	.name =		"wacom",
@@ -2956,10 +2954,8 @@ static struct hid_driver wacom_driver = {
 	.probe =	wacom_probe,
 	.remove =	wacom_remove,
 	.report =	wacom_wac_report,
-#ifdef CONFIG_PM
-	.resume =	wacom_resume,
-	.reset_resume =	wacom_reset_resume,
-#endif
+	.resume =	pm_ptr(wacom_resume),
+	.reset_resume =	pm_ptr(wacom_reset_resume),
 	.raw_event =	wacom_raw_event,
 };
 module_hid_driver(wacom_driver);

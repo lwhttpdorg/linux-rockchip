@@ -1328,7 +1328,7 @@ static int veth_set_channels(struct net_device *dev,
 		if (peer)
 			netif_carrier_off(peer);
 
-		/* try to allocate new resurces, as needed*/
+		/* try to allocate new resources, as needed*/
 		err = veth_enable_range_safe(dev, old_rx_count, new_rx_count);
 		if (err)
 			goto out;
@@ -1434,8 +1434,8 @@ static int veth_alloc_queues(struct net_device *dev)
 	struct veth_priv *priv = netdev_priv(dev);
 	int i;
 
-	priv->rq = kvcalloc(dev->num_rx_queues, sizeof(*priv->rq),
-			    GFP_KERNEL_ACCOUNT | __GFP_RETRY_MAYFAIL);
+	priv->rq = kvzalloc_objs(*priv->rq, dev->num_rx_queues,
+				 GFP_KERNEL_ACCOUNT | __GFP_RETRY_MAYFAIL);
 	if (!priv->rq)
 		return -ENOMEM;
 

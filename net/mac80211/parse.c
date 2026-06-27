@@ -6,7 +6,7 @@
  * Copyright 2007	Johannes Berg <johannes@sipsolutions.net>
  * Copyright 2013-2014  Intel Mobile Communications GmbH
  * Copyright (C) 2015-2017	Intel Deutschland GmbH
- * Copyright (C) 2018-2024 Intel Corporation
+ * Copyright (C) 2018-2026 Intel Corporation
  *
  * element parsing for mac80211
  */
@@ -33,6 +33,15 @@
 #include "wme.h"
 #include "led.h"
 #include "wep.h"
+
+static const u8 empty_non_inheritance[] = {
+	WLAN_EID_EXTENSION, 1, WLAN_EID_EXT_NON_INHERITANCE,
+	/*
+	 * cfg80211_is_element_inherited() hardcodes elements that
+	 * cannot be inherited, so we just need an empty one to be
+	 * calling it at all.
+	 */
+};
 
 struct ieee80211_elem_defrag {
 	const struct element *elem;
@@ -196,6 +205,26 @@ ieee80211_parse_extension_element(u32 *crc,
 			elems->ttlm_num++;
 		}
 		break;
+	case WLAN_EID_EXT_UHR_OPER:
+		if (params->mode < IEEE80211_CONN_MODE_UHR)
+			break;
+		calc_crc = true;
+		if (ieee80211_uhr_oper_size_ok(data, len,
+					       params->type == (IEEE80211_FTYPE_MGMT |
+								IEEE80211_STYPE_BEACON))) {
+			elems->uhr_operation = data;
+			elems->uhr_operation_len = len;
+		}
+		break;
+	case WLAN_EID_EXT_UHR_CAPA:
+		if (params->mode < IEEE80211_CONN_MODE_UHR)
+			break;
+		calc_crc = true;
+		if (ieee80211_uhr_capa_size_ok(data, len, true)) {
+			elems->uhr_cap = data;
+			elems->uhr_cap_len = len;
+		}
+		break;
 	}
 
 	if (crc && calc_crc)
@@ -292,6 +321,24 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 	u32 crc = params->crc;
 
 	bitmap_zero(seen_elems, 256);
+
+	switch (params->type) {
+	/* we don't need to parse assoc request, luckily (it's value 0) */
+	case IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_ASSOC_REQ:
+	case IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_REASSOC_REQ:
+	default:
+		WARN(1, "invalid frame type 0x%x for element parsing\n",
+		     params->type);
+		break;
+	case IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_ASSOC_RESP:
+	case IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_REASSOC_RESP:
+	case IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_PROBE_REQ:
+	case IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_PROBE_RESP:
+	case IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_BEACON:
+	case IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_ACTION:
+	case IEEE80211_FTYPE_EXT | IEEE80211_STYPE_S1G_BEACON:
+		break;
+	}
 
 	for_each_element(elem, params->start, params->len) {
 		const struct element *subelem;
@@ -573,7 +620,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (params->mode < IEEE80211_CONN_MODE_VHT)
 				break;
 
-			if (!params->action) {
+			if (params->type != (IEEE80211_FTYPE_MGMT |
+					     IEEE80211_STYPE_ACTION)) {
 				elem_parse_failed =
 					IEEE80211_PARSE_ERR_UNEXPECTED_ELEM;
 				break;
@@ -589,7 +637,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 		case WLAN_EID_CHANNEL_SWITCH_WRAPPER:
 			if (params->mode < IEEE80211_CONN_MODE_VHT)
 				break;
-			if (params->action) {
+			if (params->type == (IEEE80211_FTYPE_MGMT |
+					     IEEE80211_STYPE_ACTION)) {
 				elem_parse_failed =
 					IEEE80211_PARSE_ERR_UNEXPECTED_ELEM;
 				break;
@@ -883,7 +932,7 @@ ieee80211_prep_mle_link_parse(struct ieee80211_elems_parse *elems_parse,
 {
 	struct ieee802_11_elems *elems = &elems_parse->elems;
 	struct ieee80211_mle_per_sta_profile *prof;
-	const struct element *tmp;
+	const struct element *tmp, *ret;
 	ssize_t ml_len;
 	const u8 *end;
 
@@ -949,12 +998,21 @@ ieee80211_prep_mle_link_parse(struct ieee80211_elems_parse *elems_parse,
 	sub->len = end - sub->start;
 
 	sub->mode = params->mode;
-	sub->action = params->action;
+	sub->type = params->type;
 	sub->from_ap = params->from_ap;
 	sub->link_id = -1;
 
-	return cfg80211_find_ext_elem(WLAN_EID_EXT_NON_INHERITANCE,
-				      sub->start, sub->len);
+	ret = cfg80211_find_ext_elem(WLAN_EID_EXT_NON_INHERITANCE,
+				     sub->start, sub->len);
+	if (ret)
+		return ret;
+
+	/*
+	 * Since we know we want and found a profile, apply an empty
+	 * non-inheritance if the profile didn't have one, so that any
+	 * element that shouldn't be inherited by spec isn't.
+	 */
+	return (const void *)empty_non_inheritance;
 }
 
 static const void *
@@ -990,14 +1048,15 @@ ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params)
 	size_t scratch_len = 3 * params->len;
 	bool multi_link_inner = false;
 
+	BUILD_BUG_ON(sizeof(empty_non_inheritance) != empty_non_inheritance[1] + 2);
 	BUILD_BUG_ON(offsetof(typeof(*elems_parse), elems) != 0);
 
 	/* cannot parse for both a specific link and non-transmitted BSS */
 	if (WARN_ON(params->link_id >= 0 && params->bss))
 		return NULL;
 
-	elems_parse = kzalloc(struct_size(elems_parse, scratch, scratch_len),
-			      GFP_ATOMIC);
+	elems_parse = kzalloc_flex(*elems_parse, scratch, scratch_len,
+				   GFP_ATOMIC);
 	if (!elems_parse)
 		return NULL;
 
@@ -1029,7 +1088,7 @@ ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params)
 		sub.start = elems_parse->scratch_pos;
 		sub.mode = params->mode;
 		sub.len = nontx_len;
-		sub.action = params->action;
+		sub.type = params->type;
 		sub.link_id = params->link_id;
 
 		/* consume the space used for non-transmitted profile */
@@ -1037,6 +1096,17 @@ ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params)
 
 		non_inherit = cfg80211_find_ext_elem(WLAN_EID_EXT_NON_INHERITANCE,
 						     sub.start, nontx_len);
+		/*
+		 * If it's a non-transmitted BSS, we shouldn't pick
+		 * any elements in the outer parsing that shouldn't
+		 * be inherited. If the profile has a non-inheritance
+		 * element this automatically happens, but if not then
+		 * provide an empty one so that the hard-coded elements
+		 * in cfg80211_is_element_inherited() are ignored, but
+		 * it must be called.
+		 */
+		if (params->bss->transmitted_bss && !non_inherit)
+			non_inherit = (const void *)empty_non_inheritance;
 	} else {
 		/* must always parse to get elems_parse->ml_basic_elem */
 		non_inherit = ieee80211_prep_mle_link_parse(elems_parse, params,
@@ -1086,8 +1156,7 @@ ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params)
 }
 EXPORT_SYMBOL_IF_KUNIT(ieee802_11_parse_elems_full);
 
-int ieee80211_parse_bitrates(enum nl80211_chan_width width,
-			     const struct ieee80211_supported_band *sband,
+int ieee80211_parse_bitrates(const struct ieee80211_supported_band *sband,
 			     const u8 *srates, int srates_len, u32 *rates)
 {
 	struct ieee80211_rate *br;

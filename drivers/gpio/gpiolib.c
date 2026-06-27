@@ -37,6 +37,7 @@
 #include "gpiolib-acpi.h"
 #include "gpiolib-cdev.h"
 #include "gpiolib-of.h"
+#include "gpiolib-shared.h"
 #include "gpiolib-swnode.h"
 #include "gpiolib-sysfs.h"
 #include "gpiolib.h"
@@ -146,8 +147,7 @@ static int desc_set_label(struct gpio_desc *desc, const char *label)
 	struct gpio_desc_label *new = NULL, *old;
 
 	if (label) {
-		new = kzalloc(struct_size(new, str, strlen(label) + 1),
-			      GFP_KERNEL);
+		new = kzalloc_flex(*new, str, strlen(label) + 1);
 		if (!new)
 			return -ENOMEM;
 
@@ -235,6 +235,19 @@ int desc_to_gpio(const struct gpio_desc *desc)
 }
 EXPORT_SYMBOL_GPL(desc_to_gpio);
 
+/**
+ * gpiod_hwgpio - Return the GPIO number of the passed descriptor relative to
+ *                its chip.
+ * @desc: GPIO descriptor
+ *
+ * Returns:
+ * Hardware offset of the GPIO represented by the descriptor.
+ */
+int gpiod_hwgpio(const struct gpio_desc *desc)
+{
+	return desc - &desc->gdev->descs[0];
+}
+EXPORT_SYMBOL_GPL(gpiod_hwgpio);
 
 /**
  * gpiod_to_chip - Return the GPIO chip to which a GPIO descriptor belongs
@@ -453,9 +466,6 @@ int gpiod_get_direction(struct gpio_desc *desc)
 	if (test_bit(GPIOD_FLAG_OPEN_DRAIN, &flags) &&
 	    test_bit(GPIOD_FLAG_IS_OUT, &flags))
 		return 0;
-
-	if (!guard.gc->get_direction)
-		return -ENOTSUPP;
 
 	ret = gpiochip_get_direction(guard.gc, offset);
 	if (ret < 0)
@@ -1201,6 +1211,10 @@ int gpiochip_add_data_with_key(struct gpio_chip *gc, void *data,
 	if (ret)
 		goto err_remove_irqchip_mask;
 
+	ret = gpiochip_setup_shared(gc);
+	if (ret)
+		goto err_remove_irqchip;
+
 	/*
 	 * By first adding the chardev, and then adding the device,
 	 * we get a device node entry in sysfs under
@@ -1212,10 +1226,13 @@ int gpiochip_add_data_with_key(struct gpio_chip *gc, void *data,
 	if (gpiolib_initialized) {
 		ret = gpiochip_setup_dev(gdev);
 		if (ret)
-			goto err_remove_irqchip;
+			goto err_teardown_shared;
 	}
+
 	return 0;
 
+err_teardown_shared:
+	gpio_device_teardown_shared(gdev);
 err_remove_irqchip:
 	gpiochip_irqchip_remove(gc);
 err_remove_irqchip_mask:
@@ -1278,6 +1295,7 @@ void gpiochip_remove(struct gpio_chip *gc)
 	/* Numb the device, cancelling all outstanding operations */
 	rcu_assign_pointer(gdev->chip, NULL);
 	synchronize_srcu(&gdev->srcu);
+	gpio_device_teardown_shared(gdev);
 	gpiochip_irqchip_remove(gc);
 	acpi_gpiochip_remove(gc);
 	of_gpiochip_remove(gc);
@@ -2309,7 +2327,7 @@ int gpiochip_add_pingroup_range(struct gpio_chip *gc,
 	struct gpio_device *gdev = gc->gpiodev;
 	int ret;
 
-	pin_range = kzalloc(sizeof(*pin_range), GFP_KERNEL);
+	pin_range = kzalloc_obj(*pin_range);
 	if (!pin_range)
 		return -ENOMEM;
 
@@ -2370,7 +2388,7 @@ int gpiochip_add_pin_range_with_pins(struct gpio_chip *gc,
 	struct gpio_device *gdev = gc->gpiodev;
 	int ret;
 
-	pin_range = kzalloc(sizeof(*pin_range), GFP_KERNEL);
+	pin_range = kzalloc_obj(*pin_range);
 	if (!pin_range)
 		return -ENOMEM;
 
@@ -2429,7 +2447,7 @@ EXPORT_SYMBOL_GPL(gpiochip_remove_pin_ranges);
  * on each other, and help provide better diagnostics in debugfs.
  * They're called even less than the "set direction" calls.
  */
-static int gpiod_request_commit(struct gpio_desc *desc, const char *label)
+int gpiod_request_commit(struct gpio_desc *desc, const char *label)
 {
 	unsigned int offset;
 	int ret;
@@ -2493,7 +2511,7 @@ int gpiod_request(struct gpio_desc *desc, const char *label)
 	return ret;
 }
 
-static void gpiod_free_commit(struct gpio_desc *desc)
+void gpiod_free_commit(struct gpio_desc *desc)
 {
 	unsigned long flags;
 
@@ -3977,6 +3995,26 @@ int gpiod_set_consumer_name(struct gpio_desc *desc, const char *name)
 EXPORT_SYMBOL_GPL(gpiod_set_consumer_name);
 
 /**
+ * gpiod_is_shared() - check if this GPIO can be shared by multiple consumers
+ * @desc: GPIO to inspect
+ *
+ * Returns:
+ * True if this GPIO can be shared by multiple consumers at once. False if it's
+ * a regular, exclusive GPIO.
+ *
+ * Note:
+ * This function returning true does not mean that this GPIO is currently being
+ * shared. It means the GPIO core has registered the fact that the firmware
+ * configuration indicates that it can be shared by multiple consumers and is
+ * in charge of arbitrating the access.
+ */
+bool gpiod_is_shared(const struct gpio_desc *desc)
+{
+	return test_bit(GPIOD_FLAG_SHARED_PROXY, &desc->flags);
+}
+EXPORT_SYMBOL_GPL(gpiod_is_shared);
+
+/**
  * gpiod_to_irq() - return the IRQ corresponding to a GPIO
  * @desc: gpio whose IRQ will be returned (already requested)
  *
@@ -4467,45 +4505,41 @@ void gpiod_remove_hogs(struct gpiod_hog *hogs)
 }
 EXPORT_SYMBOL_GPL(gpiod_remove_hogs);
 
-static struct gpiod_lookup_table *gpiod_find_lookup_table(struct device *dev)
+static bool gpiod_match_lookup_table(struct device *dev,
+				     const struct gpiod_lookup_table *table)
 {
 	const char *dev_id = dev ? dev_name(dev) : NULL;
-	struct gpiod_lookup_table *table;
 
-	list_for_each_entry(table, &gpio_lookup_list, list) {
-		if (table->dev_id && dev_id) {
-			/*
-			 * Valid strings on both ends, must be identical to have
-			 * a match
-			 */
-			if (!strcmp(table->dev_id, dev_id))
-				return table;
-		} else {
-			/*
-			 * One of the pointers is NULL, so both must be to have
-			 * a match
-			 */
-			if (dev_id == table->dev_id)
-				return table;
-		}
+	lockdep_assert_held(&gpio_lookup_lock);
+
+	if (table->dev_id && dev_id) {
+		/*
+		 * Valid strings on both ends, must be identical to have
+		 * a match
+		 */
+		if (!strcmp(table->dev_id, dev_id))
+			return true;
+	} else {
+		/*
+		 * One of the pointers is NULL, so both must be to have
+		 * a match
+		 */
+		if (dev_id == table->dev_id)
+			return true;
 	}
 
-	return NULL;
+	return false;
 }
 
-static struct gpio_desc *gpiod_find(struct device *dev, const char *con_id,
-				    unsigned int idx, unsigned long *flags)
+static struct gpio_desc *gpio_desc_table_match(struct device *dev, const char *con_id,
+					       unsigned int idx, unsigned long *flags,
+					       struct gpiod_lookup_table *table)
 {
-	struct gpio_desc *desc = ERR_PTR(-ENOENT);
-	struct gpiod_lookup_table *table;
+	struct gpio_desc *desc;
 	struct gpiod_lookup *p;
 	struct gpio_chip *gc;
 
-	guard(mutex)(&gpio_lookup_lock);
-
-	table = gpiod_find_lookup_table(dev);
-	if (!table)
-		return desc;
+	lockdep_assert_held(&gpio_lookup_lock);
 
 	for (p = &table->table[0]; p->key; p++) {
 		/* idx must always match exactly */
@@ -4559,7 +4593,30 @@ static struct gpio_desc *gpiod_find(struct device *dev, const char *con_id,
 		return desc;
 	}
 
-	return desc;
+	return NULL;
+}
+
+static struct gpio_desc *gpiod_find(struct device *dev, const char *con_id,
+				    unsigned int idx, unsigned long *flags)
+{
+	struct gpiod_lookup_table *table;
+	struct gpio_desc *desc;
+
+	guard(mutex)(&gpio_lookup_lock);
+
+	list_for_each_entry(table, &gpio_lookup_list, list) {
+		if (!gpiod_match_lookup_table(dev, table))
+			continue;
+
+		desc = gpio_desc_table_match(dev, con_id, idx, flags, table);
+		if (!desc)
+			continue;
+
+		/* On IS_ERR() or match. */
+		return desc;
+	}
+
+	return ERR_PTR(-ENOENT);
 }
 
 static int platform_gpio_count(struct device *dev, const char *con_id)
@@ -4569,14 +4626,16 @@ static int platform_gpio_count(struct device *dev, const char *con_id)
 	unsigned int count = 0;
 
 	scoped_guard(mutex, &gpio_lookup_lock) {
-		table = gpiod_find_lookup_table(dev);
-		if (!table)
-			return -ENOENT;
+		list_for_each_entry(table, &gpio_lookup_list, list) {
+			if (!gpiod_match_lookup_table(dev, table))
+				continue;
 
-		for (p = &table->table[0]; p->key; p++) {
-			if ((con_id && p->con_id && !strcmp(con_id, p->con_id)) ||
-			    (!con_id && !p->con_id))
-				count++;
+			for (p = &table->table[0]; p->key; p++) {
+				if ((con_id && p->con_id &&
+				    !strcmp(con_id, p->con_id)) ||
+				    (!con_id && !p->con_id))
+					count++;
+			}
 		}
 	}
 
@@ -4647,11 +4706,30 @@ struct gpio_desc *gpiod_find_and_request(struct device *consumer,
 	scoped_guard(srcu, &gpio_devices_srcu) {
 		desc = gpiod_fwnode_lookup(fwnode, consumer, con_id, idx,
 					   &flags, &lookupflags);
+		if (!IS_ERR_OR_NULL(desc) &&
+		    test_bit(GPIOD_FLAG_SHARED, &desc->flags)) {
+			/*
+			 * We're dealing with a GPIO shared by multiple
+			 * consumers. This is the moment to add the machine
+			 * lookup table for the proxy device as previously
+			 * we only knew the consumer's fwnode.
+			 */
+			ret = gpio_shared_add_proxy_lookup(consumer, fwnode,
+							   con_id, lookupflags);
+			if (ret)
+				return ERR_PTR(ret);
+
+			/* Trigger platform lookup for shared GPIO proxy. */
+			desc = ERR_PTR(-ENOENT);
+			/* Trigger it even for fwnode-only gpiod_get(). */
+			platform_lookup_allowed = true;
+		}
+
 		if (gpiod_not_found(desc) && platform_lookup_allowed) {
 			/*
 			 * Either we are not using DT or ACPI, or their lookup
-			 * did not return a result. In that case, use platform
-			 * lookup as a fallback.
+			 * did not return a result or this is a shared GPIO. In
+			 * that case, use platform lookup as a fallback.
 			 */
 			dev_dbg(consumer,
 				"using lookup tables for GPIO lookup\n");
@@ -4674,14 +4752,19 @@ struct gpio_desc *gpiod_find_and_request(struct device *consumer,
 			return ERR_PTR(ret);
 
 		/*
-		 * This happens when there are several consumers for
-		 * the same GPIO line: we just return here without
-		 * further initialization. It is a bit of a hack.
-		 * This is necessary to support fixed regulators.
+		 * This happens when there are several consumers for the same
+		 * GPIO line: we just return here without further
+		 * initialization. It's a hack introduced long ago to support
+		 * fixed regulators. We now have a better solution with
+		 * automated scanning where affected platforms just need to
+		 * select the provided Kconfig option.
 		 *
-		 * FIXME: Make this more sane and safe.
+		 * FIXME: Remove the GPIOD_FLAGS_BIT_NONEXCLUSIVE flag after
+		 * making sure all platforms use the new mechanism.
 		 */
-		dev_info(consumer, "nonexclusive access to GPIO for %s\n", name);
+		dev_info(consumer,
+			 "nonexclusive access to GPIO for %s, consider updating your code to using gpio-shared-proxy\n",
+			 name);
 		return desc;
 	}
 
@@ -5178,27 +5261,21 @@ void gpiod_put_array(struct gpio_descs *descs)
 }
 EXPORT_SYMBOL_GPL(gpiod_put_array);
 
-static int gpio_stub_drv_probe(struct device *dev)
-{
-	/*
-	 * The DT node of some GPIO chips have a "compatible" property, but
-	 * never have a struct device added and probed by a driver to register
-	 * the GPIO chip with gpiolib. In such cases, fw_devlink=on will cause
-	 * the consumers of the GPIO chip to get probe deferred forever because
-	 * they will be waiting for a device associated with the GPIO chip
-	 * firmware node to get added and bound to a driver.
-	 *
-	 * To allow these consumers to probe, we associate the struct
-	 * gpio_device of the GPIO chip with the firmware node and then simply
-	 * bind it to this stub driver.
-	 */
-	return 0;
-}
-
+/*
+ * The DT node of some GPIO chips have a "compatible" property, but
+ * never have a struct device added and probed by a driver to register
+ * the GPIO chip with gpiolib. In such cases, fw_devlink=on will cause
+ * the consumers of the GPIO chip to get probe deferred forever because
+ * they will be waiting for a device associated with the GPIO chip
+ * firmware node to get added and bound to a driver.
+ *
+ * To allow these consumers to probe, we associate the struct
+ * gpio_device of the GPIO chip with the firmware node and then simply
+ * bind it to this stub driver.
+ */
 static struct device_driver gpio_stub_drv = {
 	.name = "gpio_stub_drv",
 	.bus = &gpio_bus_type,
-	.probe = gpio_stub_drv_probe,
 };
 
 static int __init gpiolib_dev_init(void)
@@ -5293,7 +5370,7 @@ static void *gpiolib_seq_start(struct seq_file *s, loff_t *pos)
 
 	s->private = NULL;
 
-	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+	priv = kzalloc_obj(*priv);
 	if (!priv)
 		return NULL;
 

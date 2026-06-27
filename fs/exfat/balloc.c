@@ -96,8 +96,7 @@ static int exfat_allocate_bitmap(struct super_block *sb,
 	}
 	sbi->map_sectors = ((need_map_size - 1) >>
 			(sb->s_blocksize_bits)) + 1;
-	sbi->vol_amap = kvmalloc_array(sbi->map_sectors,
-				sizeof(struct buffer_head *), GFP_KERNEL);
+	sbi->vol_amap = kvmalloc_objs(struct buffer_head *, sbi->map_sectors);
 	if (!sbi->vol_amap)
 		return -ENOMEM;
 
@@ -183,11 +182,10 @@ void exfat_free_bitmap(struct exfat_sb_info *sbi)
 	kvfree(sbi->vol_amap);
 }
 
-int exfat_set_bitmap(struct inode *inode, unsigned int clu, bool sync)
+int exfat_set_bitmap(struct super_block *sb, unsigned int clu, bool sync)
 {
 	int i, b;
 	unsigned int ent_idx;
-	struct super_block *sb = inode->i_sb;
 	struct exfat_sb_info *sbi = EXFAT_SB(sb);
 
 	if (!is_valid_cluster(sbi, clu))
@@ -202,11 +200,10 @@ int exfat_set_bitmap(struct inode *inode, unsigned int clu, bool sync)
 	return 0;
 }
 
-int exfat_clear_bitmap(struct inode *inode, unsigned int clu, bool sync)
+int exfat_clear_bitmap(struct super_block *sb, unsigned int clu, bool sync)
 {
 	int i, b;
 	unsigned int ent_idx;
-	struct super_block *sb = inode->i_sb;
 	struct exfat_sb_info *sbi = EXFAT_SB(sb);
 
 	if (!is_valid_cluster(sbi, clu))
@@ -224,6 +221,28 @@ int exfat_clear_bitmap(struct inode *inode, unsigned int clu, bool sync)
 	exfat_update_bh(sbi->vol_amap[i], sync);
 
 	return 0;
+}
+
+bool exfat_test_bitmap(struct super_block *sb, unsigned int clu)
+{
+	int i, b;
+	unsigned int ent_idx;
+	struct exfat_sb_info *sbi = EXFAT_SB(sb);
+
+	if (!sbi->vol_amap)
+		return true;
+
+	if (!is_valid_cluster(sbi, clu))
+		return false;
+
+	ent_idx = CLUSTER_TO_BITMAP_ENT(clu);
+	i = BITMAP_OFFSET_SECTOR_INDEX(sb, ent_idx);
+	b = BITMAP_OFFSET_BIT_IN_SECTOR(sb, ent_idx);
+
+	if (!test_bit_le(b, sbi->vol_amap[i]->b_data))
+		return false;
+
+	return true;
 }
 
 /*

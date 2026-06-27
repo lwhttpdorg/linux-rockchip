@@ -78,7 +78,7 @@ static int check_extent_in_eb(struct btrfs_backref_walk_ctx *ctx,
 	}
 
 add_inode_elem:
-	e = kmalloc(sizeof(*e), GFP_NOFS);
+	e = kmalloc_obj(*e, GFP_NOFS);
 	if (!e)
 		return -ENOMEM;
 
@@ -1393,6 +1393,13 @@ static int find_parent_nodes(struct btrfs_backref_walk_ctx *ctx,
 		.indirect_missing_keys = PREFTREE_INIT
 	};
 
+	if (unlikely(!root)) {
+		btrfs_err(ctx->fs_info,
+			  "missing extent root for extent at bytenr %llu",
+			  ctx->bytenr);
+		return -EUCLEAN;
+	}
+
 	/* Roots ulist is not needed when using a sharedness check context. */
 	if (sc)
 		ASSERT(ctx->roots == NULL);
@@ -1408,12 +1415,12 @@ static int find_parent_nodes(struct btrfs_backref_walk_ctx *ctx,
 	if (!path)
 		return -ENOMEM;
 	if (!ctx->trans) {
-		path->search_commit_root = 1;
-		path->skip_locking = 1;
+		path->search_commit_root = true;
+		path->skip_locking = true;
 	}
 
 	if (ctx->time_seq == BTRFS_SEQ_LAST)
-		path->skip_locking = 1;
+		path->skip_locking = true;
 
 again:
 	head = NULL;
@@ -1560,7 +1567,7 @@ again:
 
 	btrfs_release_path(path);
 
-	ret = add_missing_keys(ctx->fs_info, &preftrees, path->skip_locking == 0);
+	ret = add_missing_keys(ctx->fs_info, &preftrees, !path->skip_locking);
 	if (ret)
 		goto out;
 
@@ -1805,7 +1812,7 @@ struct btrfs_backref_share_check_ctx *btrfs_alloc_backref_share_check_ctx(void)
 {
 	struct btrfs_backref_share_check_ctx *ctx;
 
-	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+	ctx = kzalloc_obj(*ctx);
 	if (!ctx)
 		return NULL;
 
@@ -2203,6 +2210,13 @@ int extent_from_logical(struct btrfs_fs_info *fs_info, u64 logical,
 	const struct extent_buffer *eb;
 	struct btrfs_extent_item *ei;
 	struct btrfs_key key;
+
+	if (unlikely(!extent_root)) {
+		btrfs_err(fs_info,
+			  "missing extent root for extent at bytenr %llu",
+			  logical);
+		return -EUCLEAN;
+	}
 
 	key.objectid = logical;
 	if (btrfs_fs_incompat(fs_info, SKINNY_METADATA))
@@ -2785,7 +2799,7 @@ struct btrfs_data_container *init_data_container(u32 total_bytes)
  * allocates space to return multiple file system paths for an inode.
  * total_bytes to allocate are passed, note that space usable for actual path
  * information will be total_bytes - sizeof(struct inode_fs_paths).
- * the returned pointer must be freed with free_ipath() in the end.
+ * the returned pointer must be freed with __free_inode_fs_paths() in the end.
  */
 struct inode_fs_paths *init_ipath(s32 total_bytes, struct btrfs_root *fs_root,
 					struct btrfs_path *path)
@@ -2797,7 +2811,7 @@ struct inode_fs_paths *init_ipath(s32 total_bytes, struct btrfs_root *fs_root,
 	if (IS_ERR(fspath))
 		return ERR_CAST(fspath);
 
-	ifp = kmalloc(sizeof(*ifp), GFP_KERNEL);
+	ifp = kmalloc_obj(*ifp);
 	if (!ifp) {
 		kvfree(fspath);
 		return ERR_PTR(-ENOMEM);
@@ -2810,19 +2824,11 @@ struct inode_fs_paths *init_ipath(s32 total_bytes, struct btrfs_root *fs_root,
 	return ifp;
 }
 
-void free_ipath(struct inode_fs_paths *ipath)
-{
-	if (!ipath)
-		return;
-	kvfree(ipath->fspath);
-	kfree(ipath);
-}
-
 struct btrfs_backref_iter *btrfs_backref_iter_alloc(struct btrfs_fs_info *fs_info)
 {
 	struct btrfs_backref_iter *ret;
 
-	ret = kzalloc(sizeof(*ret), GFP_NOFS);
+	ret = kzalloc_obj(*ret, GFP_NOFS);
 	if (!ret)
 		return NULL;
 
@@ -2833,8 +2839,8 @@ struct btrfs_backref_iter *btrfs_backref_iter_alloc(struct btrfs_fs_info *fs_inf
 	}
 
 	/* Current backref iterator only supports iteration in commit root */
-	ret->path->search_commit_root = 1;
-	ret->path->skip_locking = 1;
+	ret->path->search_commit_root = true;
+	ret->path->skip_locking = true;
 	ret->fs_info = fs_info;
 
 	return ret;
@@ -2858,6 +2864,13 @@ int btrfs_backref_iter_start(struct btrfs_backref_iter *iter, u64 bytenr)
 	struct btrfs_extent_item *ei;
 	struct btrfs_key key;
 	int ret;
+
+	if (unlikely(!extent_root)) {
+		btrfs_err(fs_info,
+			  "missing extent root for extent at bytenr %llu",
+			  bytenr);
+		return -EUCLEAN;
+	}
 
 	key.objectid = bytenr;
 	key.type = BTRFS_METADATA_ITEM_KEY;
@@ -2995,6 +3008,13 @@ int btrfs_backref_iter_next(struct btrfs_backref_iter *iter)
 
 	/* We're at keyed items, there is no inline item, go to the next one */
 	extent_root = btrfs_extent_root(iter->fs_info, iter->bytenr);
+	if (unlikely(!extent_root)) {
+		btrfs_err(iter->fs_info,
+			  "missing extent root for extent at bytenr %llu",
+			  iter->bytenr);
+		return -EUCLEAN;
+	}
+
 	ret = btrfs_next_item(extent_root, iter->path);
 	if (ret)
 		return ret;
@@ -3032,7 +3052,7 @@ struct btrfs_backref_node *btrfs_backref_alloc_node(
 	struct btrfs_backref_node *node;
 
 	ASSERT(level >= 0 && level < BTRFS_MAX_LEVEL);
-	node = kzalloc(sizeof(*node), GFP_NOFS);
+	node = kzalloc_obj(*node, GFP_NOFS);
 	if (!node)
 		return node;
 
@@ -3065,7 +3085,7 @@ struct btrfs_backref_edge *btrfs_backref_alloc_edge(
 {
 	struct btrfs_backref_edge *edge;
 
-	edge = kzalloc(sizeof(*edge), GFP_NOFS);
+	edge = kzalloc_obj(*edge, GFP_NOFS);
 	if (edge)
 		cache->nr_edges++;
 	return edge;
@@ -3307,8 +3327,8 @@ static int handle_indirect_tree_backref(struct btrfs_trans_handle *trans,
 	level = cur->level + 1;
 
 	/* Search the tree to find parent blocks referring to the block */
-	path->search_commit_root = 1;
-	path->skip_locking = 1;
+	path->search_commit_root = true;
+	path->skip_locking = true;
 	path->lowest_level = level;
 	ret = btrfs_search_slot(NULL, root, tree_key, path, 0, 0);
 	path->lowest_level = 0;
@@ -3617,10 +3637,8 @@ int btrfs_backref_finish_upper_links(struct btrfs_backref_cache *cache,
 		}
 
 		rb_node = rb_simple_insert(&cache->rb_root, &upper->simple_node);
-		if (unlikely(rb_node)) {
+		if (unlikely(rb_node))
 			btrfs_backref_panic(cache->fs_info, upper->bytenr, -EEXIST);
-			return -EUCLEAN;
-		}
 
 		list_add_tail(&edge->list[UPPER], &upper->lower);
 

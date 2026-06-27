@@ -659,9 +659,8 @@ static inline void free_dev_table(struct amd_iommu_pci_seg *pci_seg)
 /* Allocate per PCI segment IOMMU rlookup table. */
 static inline int __init alloc_rlookup_table(struct amd_iommu_pci_seg *pci_seg)
 {
-	pci_seg->rlookup_table = kvcalloc(pci_seg->last_bdf + 1,
-					  sizeof(*pci_seg->rlookup_table),
-					  GFP_KERNEL);
+	pci_seg->rlookup_table = kvzalloc_objs(*pci_seg->rlookup_table,
+					       pci_seg->last_bdf + 1);
 	if (pci_seg->rlookup_table == NULL)
 		return -ENOMEM;
 
@@ -676,9 +675,8 @@ static inline void free_rlookup_table(struct amd_iommu_pci_seg *pci_seg)
 
 static inline int __init alloc_irq_lookup_table(struct amd_iommu_pci_seg *pci_seg)
 {
-	pci_seg->irq_lookup_table = kvcalloc(pci_seg->last_bdf + 1,
-					     sizeof(*pci_seg->irq_lookup_table),
-					     GFP_KERNEL);
+	pci_seg->irq_lookup_table = kvzalloc_objs(*pci_seg->irq_lookup_table,
+						  pci_seg->last_bdf + 1);
 	if (pci_seg->irq_lookup_table == NULL)
 		return -ENOMEM;
 
@@ -695,9 +693,8 @@ static int __init alloc_alias_table(struct amd_iommu_pci_seg *pci_seg)
 {
 	int i;
 
-	pci_seg->alias_table = kvmalloc_array(pci_seg->last_bdf + 1,
-					      sizeof(*pci_seg->alias_table),
-					      GFP_KERNEL);
+	pci_seg->alias_table = kvmalloc_objs(*pci_seg->alias_table,
+					     pci_seg->last_bdf + 1);
 	if (!pci_seg->alias_table)
 		return -ENOMEM;
 
@@ -1122,6 +1119,14 @@ static void iommu_enable_gt(struct amd_iommu *iommu)
 		return;
 
 	iommu_feature_enable(iommu, CONTROL_GT_EN);
+
+	/*
+	 * This feature needs to be enabled prior to a call
+	 * to iommu_snp_enable(). Since this function is called
+	 * in early_enable_iommu(), it is safe to enable here.
+	 */
+	if (check_feature2(FEATURE_GCR3TRPMODE))
+		iommu_feature_enable(iommu, CONTROL_GCR3TRPMODE);
 }
 
 /* sets a specific bit in the device table entry. */
@@ -1142,7 +1147,6 @@ static bool __reuse_device_table(struct amd_iommu *iommu)
 	u16 dom_id;
 	bool dte_v;
 	u64 entry;
-	int ret;
 
 	/* Each IOMMU use separate device table with the same size */
 	lo = readl(iommu->mmio_base + MMIO_DEV_TABLE_OFFSET);
@@ -1180,7 +1184,7 @@ static bool __reuse_device_table(struct amd_iommu *iommu)
 	for (devid = 0; devid <= pci_seg->last_bdf; devid++) {
 		old_dev_tbl_entry = &pci_seg->old_dev_tbl_cpy[devid];
 		dte_v = FIELD_GET(DTE_FLAG_V, old_dev_tbl_entry->data[0]);
-		dom_id = FIELD_GET(DEV_DOMID_MASK, old_dev_tbl_entry->data[1]);
+		dom_id = FIELD_GET(DTE_DOMID_MASK, old_dev_tbl_entry->data[1]);
 
 		if (!dte_v || !dom_id)
 			continue;
@@ -1189,8 +1193,7 @@ static bool __reuse_device_table(struct amd_iommu *iommu)
 		 * are multiple devices present in the same domain,
 		 * hence check only for -ENOMEM.
 		 */
-		ret = ida_alloc_range(&pdom_ids, dom_id, dom_id, GFP_KERNEL);
-		if (ret == -ENOMEM)
+		if (amd_iommu_pdom_id_reserve(dom_id, GFP_KERNEL) == -ENOMEM)
 			return false;
 	}
 
@@ -1279,7 +1282,7 @@ set_dev_entry_from_acpi_range(struct amd_iommu *iommu, u16 first, u16 last,
 		if (search_ivhd_dte_flags(iommu->pci_seg->id, first, last))
 			return;
 
-		d = kzalloc(sizeof(struct ivhd_dte_flags), GFP_KERNEL);
+		d = kzalloc_obj(struct ivhd_dte_flags);
 		if (!d)
 			return;
 
@@ -1351,7 +1354,7 @@ int __init add_special_device(u8 type, u8 id, u32 *devid, bool cmd_line)
 		return 0;
 	}
 
-	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+	entry = kzalloc_obj(*entry);
 	if (!entry)
 		return -ENOMEM;
 
@@ -1382,7 +1385,7 @@ static int __init add_acpi_hid_device(u8 *hid, u8 *uid, u32 *devid,
 		return 0;
 	}
 
-	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+	entry = kzalloc_obj(*entry);
 	if (!entry)
 		return -ENOMEM;
 
@@ -1715,7 +1718,7 @@ static struct amd_iommu_pci_seg *__init alloc_pci_segment(u16 id,
 	if (last_bdf < 0)
 		return NULL;
 
-	pci_seg = kzalloc(sizeof(struct amd_iommu_pci_seg), GFP_KERNEL);
+	pci_seg = kzalloc_obj(struct amd_iommu_pci_seg);
 	if (pci_seg == NULL)
 		return NULL;
 
@@ -2035,7 +2038,7 @@ static int __init init_iommu_all(struct acpi_table_header *table)
 			DUMP_printk("       mmio-addr: %016llx\n",
 				    h->mmio_phys);
 
-			iommu = kzalloc(sizeof(struct amd_iommu), GFP_KERNEL);
+			iommu = kzalloc_obj(struct amd_iommu);
 			if (iommu == NULL)
 				return -ENOMEM;
 
@@ -2281,6 +2284,9 @@ static void print_iommu_info(void)
 
 		if (check_feature(FEATURE_SNP))
 			pr_cont(" SNP");
+
+		if (check_feature2(FEATURE_SEVSNPIO_SUP))
+			pr_cont(" SEV-TIO");
 
 		pr_cont("\n");
 	}
@@ -2633,7 +2639,7 @@ static int __init init_unity_map_range(struct ivmd_header *m,
 	if (pci_seg == NULL)
 		return -ENOMEM;
 
-	e = kzalloc(sizeof(*e), GFP_KERNEL);
+	e = kzalloc_obj(*e);
 	if (e == NULL)
 		return -ENOMEM;
 
@@ -3050,7 +3056,7 @@ static void disable_iommus(void)
  * disable suspend until real resume implemented
  */
 
-static void amd_iommu_resume(void)
+static void amd_iommu_resume(void *data)
 {
 	struct amd_iommu *iommu;
 
@@ -3064,7 +3070,7 @@ static void amd_iommu_resume(void)
 	amd_iommu_enable_interrupts();
 }
 
-static int amd_iommu_suspend(void)
+static int amd_iommu_suspend(void *data)
 {
 	/* disable IOMMUs to go out of the way for BIOS */
 	disable_iommus();
@@ -3072,9 +3078,13 @@ static int amd_iommu_suspend(void)
 	return 0;
 }
 
-static struct syscore_ops amd_iommu_syscore_ops = {
+static const struct syscore_ops amd_iommu_syscore_ops = {
 	.suspend = amd_iommu_suspend,
 	.resume = amd_iommu_resume,
+};
+
+static struct syscore amd_iommu_syscore = {
+	.ops = &amd_iommu_syscore_ops,
 };
 
 static void __init free_iommu_resources(void)
@@ -3137,8 +3147,7 @@ static bool __init check_ioapic_information(void)
 
 static void __init free_dma_resources(void)
 {
-	ida_destroy(&pdom_ids);
-
+	amd_iommu_pdom_id_destroy();
 	free_unity_maps();
 }
 
@@ -3421,7 +3430,7 @@ static int __init state_next(void)
 		init_state = IOMMU_ENABLED;
 		break;
 	case IOMMU_ENABLED:
-		register_syscore_ops(&amd_iommu_syscore_ops);
+		register_syscore(&amd_iommu_syscore);
 		iommu_snp_enable();
 		ret = amd_iommu_init_pci();
 		init_state = ret ? IOMMU_INIT_ERROR : IOMMU_PCI_INIT;
@@ -3524,12 +3533,12 @@ int __init amd_iommu_enable(void)
 
 void amd_iommu_disable(void)
 {
-	amd_iommu_suspend();
+	amd_iommu_suspend(NULL);
 }
 
 int amd_iommu_reenable(int mode)
 {
-	amd_iommu_resume();
+	amd_iommu_resume(NULL);
 
 	return 0;
 }
@@ -4041,4 +4050,10 @@ int amd_iommu_snp_disable(void)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(amd_iommu_snp_disable);
+
+bool amd_iommu_sev_tio_supported(void)
+{
+	return check_feature2(FEATURE_SEVSNPIO_SUP);
+}
+EXPORT_SYMBOL_GPL(amd_iommu_sev_tio_supported);
 #endif

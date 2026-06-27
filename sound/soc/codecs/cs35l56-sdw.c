@@ -554,7 +554,7 @@ static int cs35l56_sdw_probe(struct sdw_slave *peripheral, const struct sdw_devi
 	return 0;
 }
 
-static int cs35l56_sdw_remove(struct sdw_slave *peripheral)
+static void cs35l56_sdw_remove(struct sdw_slave *peripheral)
 {
 	struct cs35l56_private *cs35l56 = dev_get_drvdata(&peripheral->dev);
 
@@ -567,8 +567,6 @@ static int cs35l56_sdw_remove(struct sdw_slave *peripheral)
 	flush_work(&cs35l56->sdw_irq_work);
 
 	cs35l56_remove(cs35l56);
-
-	return 0;
 }
 
 static const struct dev_pm_ops cs35l56_sdw_pm = {

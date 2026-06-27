@@ -450,8 +450,7 @@ static int nvmet_tcp_map_data(struct nvmet_tcp_cmd *cmd)
 	cmd->cur_sg = cmd->req.sg;
 
 	if (nvmet_tcp_has_data_in(cmd)) {
-		cmd->iov = kmalloc_array(cmd->req.sg_cnt,
-				sizeof(*cmd->iov), GFP_KERNEL);
+		cmd->iov = kmalloc_objs(*cmd->iov, cmd->req.sg_cnt);
 		if (!cmd->iov)
 			goto err;
 	}
@@ -1546,7 +1545,7 @@ static int nvmet_tcp_alloc_cmds(struct nvmet_tcp_queue *queue)
 	struct nvmet_tcp_cmd *cmds;
 	int i, ret = -EINVAL, nr_cmds = queue->nr_cmds;
 
-	cmds = kcalloc(nr_cmds, sizeof(struct nvmet_tcp_cmd), GFP_KERNEL);
+	cmds = kvzalloc_objs(struct nvmet_tcp_cmd, nr_cmds);
 	if (!cmds)
 		goto out;
 
@@ -1562,7 +1561,7 @@ static int nvmet_tcp_alloc_cmds(struct nvmet_tcp_queue *queue)
 out_free:
 	while (--i >= 0)
 		nvmet_tcp_free_cmd(cmds + i);
-	kfree(cmds);
+	kvfree(cmds);
 out:
 	return ret;
 }
@@ -1576,7 +1575,7 @@ static void nvmet_tcp_free_cmds(struct nvmet_tcp_queue *queue)
 		nvmet_tcp_free_cmd(cmds + i);
 
 	nvmet_tcp_free_cmd(&queue->connect);
-	kfree(cmds);
+	kvfree(cmds);
 }
 
 static void nvmet_tcp_restore_socket_callbacks(struct nvmet_tcp_queue *queue)
@@ -1934,7 +1933,7 @@ static void nvmet_tcp_alloc_queue(struct nvmet_tcp_port *port,
 	struct file *sock_file = NULL;
 	int ret;
 
-	queue = kzalloc(sizeof(*queue), GFP_KERNEL);
+	queue = kzalloc_obj(*queue);
 	if (!queue) {
 		ret = -ENOMEM;
 		goto out_release;
@@ -2070,7 +2069,7 @@ static int nvmet_tcp_add_port(struct nvmet_port *nport)
 	__kernel_sa_family_t af;
 	int ret;
 
-	port = kzalloc(sizeof(*port), GFP_KERNEL);
+	port = kzalloc_obj(*port);
 	if (!port)
 		return -ENOMEM;
 
@@ -2116,7 +2115,7 @@ static int nvmet_tcp_add_port(struct nvmet_port *nport)
 	if (so_priority > 0)
 		sock_set_priority(port->sock->sk, so_priority);
 
-	ret = kernel_bind(port->sock, (struct sockaddr *)&port->addr,
+	ret = kernel_bind(port->sock, (struct sockaddr_unsized *)&port->addr,
 			sizeof(port->addr));
 	if (ret) {
 		pr_err("failed to bind port socket %d\n", ret);

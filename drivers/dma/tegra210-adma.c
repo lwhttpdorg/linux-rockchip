@@ -755,7 +755,7 @@ static struct dma_async_tx_descriptor *tegra_adma_prep_dma_cyclic(
 		return NULL;
 	}
 
-	desc = kzalloc(sizeof(*desc), GFP_NOWAIT);
+	desc = kzalloc_obj(*desc, GFP_NOWAIT);
 	if (!desc)
 		return NULL;
 
@@ -1238,7 +1238,6 @@ static struct platform_driver tegra_admac_driver = {
 
 module_platform_driver(tegra_admac_driver);
 
-MODULE_ALIAS("platform:tegra210-adma");
 MODULE_DESCRIPTION("NVIDIA Tegra ADMA driver");
 MODULE_AUTHOR("Dara Ramesh <dramesh@nvidia.com>");
 MODULE_AUTHOR("Jon Hunter <jonathanh@nvidia.com>");

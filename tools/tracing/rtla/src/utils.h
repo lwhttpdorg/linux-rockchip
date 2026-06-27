@@ -4,6 +4,7 @@
 #include <time.h>
 #include <sched.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 /*
  * '18446744073709551615\0'
@@ -20,11 +21,11 @@
 extern int config_debug;
 void debug_msg(const char *fmt, ...);
 void err_msg(const char *fmt, ...);
+void fatal(const char *fmt, ...);
 
 long parse_seconds_duration(char *val);
 void get_duration(time_t start_time, char *output, int output_size);
 
-int parse_cpu_list(char *cpu_list, char **monitored_cpus);
 char *parse_optional_arg(int argc, char **argv);
 long long get_llong_from_str(char *start);
 
@@ -88,7 +89,7 @@ __attribute__((__warn_unused_result__)) int strtoi(const char *s, int *res);
 #define ns_to_per(total, part) ((part * 100) / (double)total)
 
 enum result {
-	PASSED = 0, /* same as EXIT_SUCCESS */
-	ERROR = 1,  /* same as EXIT_FAILURE, an error in arguments */
-	FAILED = 2, /* test hit the stop tracing condition */
+	PASSED	= EXIT_SUCCESS,
+	ERROR	= EXIT_FAILURE,
+	FAILED, /* test hit the stop tracing condition */
 };

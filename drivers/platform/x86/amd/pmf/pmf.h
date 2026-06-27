@@ -12,7 +12,10 @@
 #define PMF_H
 
 #include <linux/acpi.h>
+#include <linux/amd-pmf-io.h>
+#include <linux/circ_buf.h>
 #include <linux/input.h>
+#include <linux/mutex_types.h>
 #include <linux/platform_device.h>
 #include <linux/platform_profile.h>
 
@@ -119,6 +122,14 @@ struct cookie_header {
 
 #define APTS_MAX_STATES		16
 #define CUSTOM_BIOS_INPUT_BITS	GENMASK(16, 7)
+#define BIOS_INPUTS_MAX		10
+#define CUSTOM_BIOS_INPUT_RING_ENTRIES	64	/* Must be power of two for CIRC_* macros */
+
+/* amd_pmf_send_cmd() set/get */
+#define SET_CMD		false
+#define GET_CMD		true
+
+#define METRICS_TABLE_ID	7
 
 typedef void (*apmf_event_handler_t)(acpi_handle handle, u32 event, void *data);
 
@@ -210,7 +221,7 @@ struct apmf_sbios_req_v1 {
 	u8 skin_temp_apu;
 	u8 skin_temp_hs2;
 	u8 enable_cnqf;
-	u32 custom_policy[10];
+	u32 custom_policy[BIOS_INPUTS_MAX];
 } __packed;
 
 struct apmf_sbios_req_v2 {
@@ -222,7 +233,7 @@ struct apmf_sbios_req_v2 {
 	u32 stt_min_limit;
 	u8 skin_temp_apu;
 	u8 skin_temp_hs2;
-	u32 custom_policy[10];
+	u32 custom_policy[BIOS_INPUTS_MAX];
 } __packed;
 
 struct apmf_fan_idx {
@@ -249,12 +260,12 @@ struct smu_pmf_metrics_v2 {
 	u16 vclk_freq;			/* MHz */
 	u16 vcn_activity;		/* VCN busy % [0-100] */
 	u16 vpeclk_freq;		/* MHz */
-	u16 ipuclk_freq;		/* MHz */
-	u16 ipu_busy[8];		/* NPU busy % [0-100] */
+	u16 npuclk_freq;		/* MHz */
+	u16 npu_busy[8];		/* NPU busy % [0-100] */
 	u16 dram_reads;			/* MB/sec */
 	u16 dram_writes;		/* MB/sec */
 	u16 core_c0residency[16];	/* C0 residency % [0-100] */
-	u16 ipu_power;			/* mW */
+	u16 npu_power;			/* mW */
 	u32 apu_power;			/* mW */
 	u32 gfx_power;			/* mW */
 	u32 dgpu_power;			/* mW */
@@ -263,9 +274,9 @@ struct smu_pmf_metrics_v2 {
 	u32 filter_alpha_value;		/* time constant [us] */
 	u32 metrics_counter;
 	u16 memclk_freq;		/* MHz */
-	u16 mpipuclk_freq;		/* MHz */
-	u16 ipu_reads;			/* MB/sec */
-	u16 ipu_writes;			/* MB/sec */
+	u16 mpnpuclk_freq;		/* MHz */
+	u16 npu_reads;			/* MB/sec */
+	u16 npu_writes;			/* MB/sec */
 	u32 throttle_residency_prochot;
 	u32 throttle_residency_spl;
 	u32 throttle_residency_fppt;
@@ -361,7 +372,23 @@ enum power_modes_v2 {
 };
 
 struct pmf_bios_inputs_prev {
-	u32 custom_bios_inputs[10];
+	u32 custom_bios_inputs[BIOS_INPUTS_MAX];
+};
+
+/**
+ * struct pmf_bios_input_entry - Snapshot of custom BIOS input event
+ * @val: Array of custom BIOS input values
+ * @preq: Pending request value associated with this event
+ */
+struct pmf_bios_input_entry {
+	u32 val[BIOS_INPUTS_MAX];
+	u32 preq;
+};
+
+struct pmf_cbi_ring_buffer {
+	struct pmf_bios_input_entry data[CUSTOM_BIOS_INPUT_RING_ENTRIES];
+	int head;
+	int tail;
 };
 
 struct amd_pmf_dev {
@@ -412,6 +439,9 @@ struct amd_pmf_dev {
 	struct apmf_sbios_req_v1 req1;
 	struct pmf_bios_inputs_prev cb_prev; /* To preserve custom BIOS inputs */
 	bool cb_flag;			     /* To handle first custom BIOS input */
+	struct pmf_cbi_ring_buffer cbi_buf;
+	struct mutex cbi_mutex;		     /* Protects ring buffer access */
+	struct mutex metrics_mutex;
 };
 
 struct apmf_sps_prop_granular_v2 {
@@ -457,7 +487,7 @@ struct os_power_slider {
 struct amd_pmf_notify_smart_pc_update {
 	u16 size;
 	u32 pending_req;
-	u32 custom_bios[10];
+	u32 custom_bios[BIOS_INPUTS_MAX];
 } __packed;
 
 struct fan_table_control {

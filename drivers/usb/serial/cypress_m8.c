@@ -453,7 +453,7 @@ static int cypress_generic_port_probe(struct usb_serial_port *port)
 	if (port->interrupt_out_size < 8)
 		return -EINVAL;
 
-	priv = kzalloc(sizeof(struct cypress_private), GFP_KERNEL);
+	priv = kzalloc_obj(struct cypress_private);
 	if (!priv)
 		return -ENOMEM;
 

@@ -12,6 +12,9 @@
 #include <linux/spi/spi-mem.h>
 #include <linux/sched/task_stack.h>
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/spi-mem.h>
+
 #include "internals.h"
 
 #define SPI_MEM_MAX_BUSWIDTH		8
@@ -421,7 +424,9 @@ int spi_mem_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
 		if (ret)
 			return ret;
 
+		trace_spi_mem_start_op(mem, op);
 		ret = ctlr->mem_ops->exec_op(mem, op);
+		trace_spi_mem_stop_op(mem, op);
 
 		spi_mem_access_end(mem);
 
@@ -715,7 +720,7 @@ spi_mem_dirmap_create(struct spi_mem *mem,
 	if (info->op_tmpl.data.dir == SPI_MEM_NO_DATA)
 		return ERR_PTR(-EINVAL);
 
-	desc = kzalloc(sizeof(*desc), GFP_KERNEL);
+	desc = kzalloc_obj(*desc);
 	if (!desc)
 		return ERR_PTR(-ENOMEM);
 

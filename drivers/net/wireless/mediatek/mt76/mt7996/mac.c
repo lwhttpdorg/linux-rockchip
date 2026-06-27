@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: ISC
+// SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
  * Copyright (C) 2022 MediaTek Inc.
  */
@@ -721,6 +721,7 @@ mt7996_mac_fill_rx(struct mt7996_dev *dev, enum mt76_rxq_id q,
 		status->flag |= RX_FLAG_8023;
 		mt7996_wed_check_ppe(dev, &dev->mt76.q_rx[q], msta, skb,
 				     *info);
+		mt76_npu_check_ppe(&dev->mt76, skb, *info);
 	}
 
 	if (rxv && !(status->flag & RX_FLAG_8023)) {
@@ -2552,6 +2553,7 @@ void mt7996_mac_reset_work(struct work_struct *work)
 	if (mtk_wed_device_active(&dev->mt76.mmio.wed))
 		mtk_wed_device_stop(&dev->mt76.mmio.wed);
 
+	mt7996_npu_hw_stop(dev);
 	ieee80211_stop_queues(mt76_hw(dev));
 
 	set_bit(MT76_RESET, &dev->mphy.state);
@@ -2593,7 +2595,7 @@ void mt7996_mac_reset_work(struct work_struct *work)
 	mt76_wr(dev, MT_MCU_INT_EVENT, MT_MCU_INT_EVENT_RESET_DONE);
 	mt7996_wait_reset_state(dev, MT_MCU_CMD_NORMAL_STATE);
 
-	/* enable DMA Tx/Tx and interrupt */
+	/* enable DMA Rx/Tx and interrupt */
 	mt7996_dma_start(dev, false, false);
 
 	if (!is_mt7996(&dev->mt76) && dev->mt76.hwrro_mode == MT76_HWRRO_V3)
@@ -2641,10 +2643,11 @@ void mt7996_mac_reset_work(struct work_struct *work)
 	local_bh_enable();
 
 	ieee80211_wake_queues(hw);
+	mt7996_update_beacons(dev);
 
 	mutex_unlock(&dev->mt76.mutex);
 
-	mt7996_update_beacons(dev);
+	mt7996_npu_hw_init(dev);
 
 	mt7996_for_each_phy(dev, phy)
 		ieee80211_queue_delayed_work(hw, &phy->mt76->mac_work,

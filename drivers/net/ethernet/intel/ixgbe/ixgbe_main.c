@@ -6905,8 +6905,7 @@ static int ixgbe_sw_init(struct ixgbe_adapter *adapter,
 #endif /* IXGBE_FCOE */
 
 	/* initialize static ixgbe jump table entries */
-	adapter->jump_tables[0] = kzalloc(sizeof(*adapter->jump_tables[0]),
-					  GFP_KERNEL);
+	adapter->jump_tables[0] = kzalloc_obj(*adapter->jump_tables[0]);
 	if (!adapter->jump_tables[0])
 		return -ENOMEM;
 	adapter->jump_tables[0]->mat = ixgbe_ipv4_fields;
@@ -6914,9 +6913,8 @@ static int ixgbe_sw_init(struct ixgbe_adapter *adapter,
 	for (i = 1; i < IXGBE_MAX_LINK_HANDLE; i++)
 		adapter->jump_tables[i] = NULL;
 
-	adapter->mac_table = kcalloc(hw->mac.num_rar_entries,
-				     sizeof(struct ixgbe_mac_addr),
-				     GFP_KERNEL);
+	adapter->mac_table = kzalloc_objs(struct ixgbe_mac_addr,
+					  hw->mac.num_rar_entries);
 	if (!adapter->mac_table)
 		return -ENOMEM;
 
@@ -7459,7 +7457,7 @@ int ixgbe_open(struct net_device *netdev)
 					 adapter->hw.link.link_info.link_cfg_err);
 
 		err = ixgbe_non_sfp_link_config(&adapter->hw);
-		if (ixgbe_non_sfp_link_config(&adapter->hw))
+		if (err)
 			e_dev_err("Link setup failed, err %d.\n", err);
 	}
 
@@ -10283,15 +10281,15 @@ static int ixgbe_configure_clsu32(struct ixgbe_adapter *adapter,
 			    (__force u32)cls->knode.sel->offmask)
 				return err;
 
-			jump = kzalloc(sizeof(*jump), GFP_KERNEL);
+			jump = kzalloc_obj(*jump);
 			if (!jump)
 				return -ENOMEM;
-			input = kzalloc(sizeof(*input), GFP_KERNEL);
+			input = kzalloc_obj(*input);
 			if (!input) {
 				err = -ENOMEM;
 				goto free_jump;
 			}
-			mask = kzalloc(sizeof(*mask), GFP_KERNEL);
+			mask = kzalloc_obj(*mask);
 			if (!mask) {
 				err = -ENOMEM;
 				goto free_input;
@@ -10315,10 +10313,10 @@ static int ixgbe_configure_clsu32(struct ixgbe_adapter *adapter,
 		return 0;
 	}
 
-	input = kzalloc(sizeof(*input), GFP_KERNEL);
+	input = kzalloc_obj(*input);
 	if (!input)
 		return -ENOMEM;
-	mask = kzalloc(sizeof(*mask), GFP_KERNEL);
+	mask = kzalloc_obj(*mask);
 	if (!mask) {
 		err = -ENOMEM;
 		goto free_input;
@@ -10796,7 +10794,7 @@ static void *ixgbe_fwd_add(struct net_device *pdev, struct net_device *vdev)
 			return ERR_PTR(-ENOMEM);
 	}
 
-	accel = kzalloc(sizeof(*accel), GFP_KERNEL);
+	accel = kzalloc_obj(*accel);
 	if (!accel)
 		return ERR_PTR(-ENOMEM);
 
@@ -12050,7 +12048,7 @@ err_dma:
  * @pdev: PCI device information struct
  *
  * ixgbe_remove is called by the PCI subsystem to alert the driver
- * that it should release a PCI device.  The could be caused by a
+ * that it should release a PCI device.  This could be caused by a
  * Hot-Plug event, or because the driver is going to be removed from
  * memory.
  **/

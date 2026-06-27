@@ -231,12 +231,12 @@ static struct fuse_ring *fuse_uring_create(struct fuse_conn *fc)
 	struct fuse_ring *res = NULL;
 	size_t max_payload_size;
 
-	ring = kzalloc(sizeof(*fc->ring), GFP_KERNEL_ACCOUNT);
+	ring = kzalloc_obj(*fc->ring, GFP_KERNEL_ACCOUNT);
 	if (!ring)
 		return NULL;
 
-	ring->queues = kcalloc(nr_queues, sizeof(struct fuse_ring_queue *),
-			       GFP_KERNEL_ACCOUNT);
+	ring->queues = kzalloc_objs(struct fuse_ring_queue *, nr_queues,
+				    GFP_KERNEL_ACCOUNT);
 	if (!ring->queues)
 		goto out_err;
 
@@ -274,10 +274,10 @@ static struct fuse_ring_queue *fuse_uring_create_queue(struct fuse_ring *ring,
 	struct fuse_ring_queue *queue;
 	struct list_head *pq;
 
-	queue = kzalloc(sizeof(*queue), GFP_KERNEL_ACCOUNT);
+	queue = kzalloc_obj(*queue, GFP_KERNEL_ACCOUNT);
 	if (!queue)
 		return NULL;
-	pq = kcalloc(FUSE_PQ_HASH_SIZE, sizeof(struct list_head), GFP_KERNEL);
+	pq = kzalloc_objs(struct list_head, FUSE_PQ_HASH_SIZE);
 	if (!pq) {
 		kfree(queue);
 		return NULL;
@@ -604,9 +604,9 @@ static int fuse_uring_copy_from_ring(struct fuse_ring *ring,
 	return err;
 }
 
- /*
-  * Copy data from the req to the ring buffer
-  */
+/*
+ * Copy data from the req to the ring buffer
+ */
 static int fuse_uring_args_to_ring(struct fuse_ring *ring, struct fuse_req *req,
 				   struct fuse_ring_ent *ent)
 {
@@ -879,7 +879,8 @@ static int fuse_ring_ent_set_commit(struct fuse_ring_ent *ent)
 static int fuse_uring_commit_fetch(struct io_uring_cmd *cmd, int issue_flags,
 				   struct fuse_conn *fc)
 {
-	const struct fuse_uring_cmd_req *cmd_req = io_uring_sqe_cmd(cmd->sqe);
+	const struct fuse_uring_cmd_req *cmd_req = io_uring_sqe128_cmd(cmd->sqe,
+								       struct fuse_uring_cmd_req);
 	struct fuse_ring_ent *ent;
 	int err;
 	struct fuse_ring *ring = fc->ring;
@@ -1062,7 +1063,7 @@ fuse_uring_create_ring_ent(struct io_uring_cmd *cmd,
 	}
 
 	err = -ENOMEM;
-	ent = kzalloc(sizeof(*ent), GFP_KERNEL_ACCOUNT);
+	ent = kzalloc_obj(*ent, GFP_KERNEL_ACCOUNT);
 	if (!ent)
 		return ERR_PTR(err);
 
@@ -1083,7 +1084,8 @@ fuse_uring_create_ring_ent(struct io_uring_cmd *cmd,
 static int fuse_uring_register(struct io_uring_cmd *cmd,
 			       unsigned int issue_flags, struct fuse_conn *fc)
 {
-	const struct fuse_uring_cmd_req *cmd_req = io_uring_sqe_cmd(cmd->sqe);
+	const struct fuse_uring_cmd_req *cmd_req = io_uring_sqe128_cmd(cmd->sqe,
+								       struct fuse_uring_cmd_req);
 	struct fuse_ring *ring = smp_load_acquire(&fc->ring);
 	struct fuse_ring_queue *queue;
 	struct fuse_ring_ent *ent;
@@ -1213,14 +1215,15 @@ static void fuse_uring_send(struct fuse_ring_ent *ent, struct io_uring_cmd *cmd,
  * User buffers are not mapped yet - the application does not have permission
  * to write to it - this has to be executed in ring task context.
  */
-static void fuse_uring_send_in_task(struct io_uring_cmd *cmd,
-				    unsigned int issue_flags)
+static void fuse_uring_send_in_task(struct io_tw_req tw_req, io_tw_token_t tw)
 {
+	unsigned int issue_flags = IO_URING_CMD_TASK_WORK_ISSUE_FLAGS;
+	struct io_uring_cmd *cmd = io_uring_cmd_from_tw(tw_req);
 	struct fuse_ring_ent *ent = uring_cmd_to_ring_ent(cmd);
 	struct fuse_ring_queue *queue = ent->queue;
 	int err;
 
-	if (!(issue_flags & IO_URING_F_TASK_DEAD)) {
+	if (!tw.cancel) {
 		err = fuse_uring_prepare_send(ent, ent->fuse_req);
 		if (err) {
 			fuse_uring_next_fuse_req(ent, queue, issue_flags);

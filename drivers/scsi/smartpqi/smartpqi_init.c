@@ -34,11 +34,11 @@
 #define BUILD_TIMESTAMP
 #endif
 
-#define DRIVER_VERSION		"2.1.34-035"
+#define DRIVER_VERSION		"2.1.36-026"
 #define DRIVER_MAJOR		2
 #define DRIVER_MINOR		1
-#define DRIVER_RELEASE		34
-#define DRIVER_REVISION		35
+#define DRIVER_RELEASE		36
+#define DRIVER_REVISION		26
 
 #define DRIVER_NAME		"Microchip SmartPQI Driver (v" \
 				DRIVER_VERSION BUILD_TIMESTAMP ")"
@@ -888,7 +888,7 @@ static int pqi_get_advanced_raid_bypass_config(struct pqi_ctrl_info *ctrl_info)
 	struct pqi_raid_path_request request;
 	struct bmic_sense_feature_buffer *buffer;
 
-	buffer = kmalloc(sizeof(*buffer), GFP_KERNEL);
+	buffer = kmalloc_obj(*buffer);
 	if (!buffer)
 		return -ENOMEM;
 
@@ -953,7 +953,7 @@ static int pqi_flush_cache(struct pqi_ctrl_info *ctrl_info,
 	int rc;
 	struct bmic_flush_cache *flush_cache;
 
-	flush_cache = kzalloc(sizeof(*flush_cache), GFP_KERNEL);
+	flush_cache = kzalloc_obj(*flush_cache);
 	if (!flush_cache)
 		return -ENOMEM;
 
@@ -982,7 +982,7 @@ static int pqi_set_diag_rescan(struct pqi_ctrl_info *ctrl_info)
 	int rc;
 	struct bmic_diag_options *diag;
 
-	diag = kzalloc(sizeof(*diag), GFP_KERNEL);
+	diag = kzalloc_obj(*diag);
 	if (!diag)
 		return -ENOMEM;
 
@@ -1164,7 +1164,7 @@ static int pqi_report_phys_logical_luns(struct pqi_ctrl_info *ctrl_info, u8 cmd,
 	void *lun_data = NULL;
 	struct report_lun_header *report_lun_header;
 
-	report_lun_header = kmalloc(sizeof(*report_lun_header), GFP_KERNEL);
+	report_lun_header = kmalloc_obj(*report_lun_header);
 	if (!report_lun_header) {
 		rc = -ENOMEM;
 		goto out;
@@ -1252,8 +1252,8 @@ static inline int pqi_report_phys_luns(struct pqi_ctrl_info *ctrl_info, void **b
 	rpl_8byte_wwid_list = rpl_list;
 	num_physicals = get_unaligned_be32(&rpl_8byte_wwid_list->header.list_length) / sizeof(rpl_8byte_wwid_list->lun_entries[0]);
 
-	rpl_16byte_wwid_list = kmalloc(struct_size(rpl_16byte_wwid_list, lun_entries,
-						   num_physicals), GFP_KERNEL);
+	rpl_16byte_wwid_list = kmalloc_flex(*rpl_16byte_wwid_list, lun_entries,
+					    num_physicals);
 	if (!rpl_16byte_wwid_list) {
 		rc = -ENOMEM;
 		goto out_free_rpl_list;
@@ -1478,7 +1478,7 @@ static int pqi_get_raid_map(struct pqi_ctrl_info *ctrl_info,
 	u32 raid_map_size;
 	struct raid_map *raid_map;
 
-	raid_map = kmalloc(sizeof(*raid_map), GFP_KERNEL);
+	raid_map = kmalloc_obj(*raid_map);
 	if (!raid_map)
 		return -ENOMEM;
 
@@ -1616,7 +1616,7 @@ static void pqi_get_volume_status(struct pqi_ctrl_info *ctrl_info,
 	u32 volume_flags;
 	struct ciss_vpd_logical_volume_status *vpd;
 
-	vpd = kmalloc(sizeof(*vpd), GFP_KERNEL);
+	vpd = kmalloc_obj(*vpd);
 	if (!vpd)
 		goto no_buffer;
 
@@ -2447,7 +2447,7 @@ static int pqi_update_scsi_devices(struct pqi_ctrl_info *ctrl_info)
 		 * pqi_get_physical_disk_info() because it's a fairly large
 		 * buffer.
 		 */
-		id_phys = kmalloc(sizeof(*id_phys), GFP_KERNEL);
+		id_phys = kmalloc_obj(*id_phys);
 		if (!id_phys) {
 			dev_warn(&ctrl_info->pci_dev->dev, "%s\n",
 				out_of_memory_msg);
@@ -2472,9 +2472,7 @@ static int pqi_update_scsi_devices(struct pqi_ctrl_info *ctrl_info)
 
 	num_new_devices = num_physicals + num_logicals;
 
-	new_device_list = kmalloc_array(num_new_devices,
-					sizeof(*new_device_list),
-					GFP_KERNEL);
+	new_device_list = kmalloc_objs(*new_device_list, num_new_devices);
 	if (!new_device_list) {
 		dev_warn(&ctrl_info->pci_dev->dev, "%s\n", out_of_memory_msg);
 		rc = -ENOMEM;
@@ -2482,7 +2480,7 @@ static int pqi_update_scsi_devices(struct pqi_ctrl_info *ctrl_info)
 	}
 
 	for (i = 0; i < num_new_devices; i++) {
-		device = kzalloc(sizeof(*device), GFP_KERNEL);
+		device = kzalloc_obj(*device);
 		if (!device) {
 			dev_warn(&ctrl_info->pci_dev->dev, "%s\n",
 				out_of_memory_msg);
@@ -4751,7 +4749,7 @@ static int pqi_report_device_capability(struct pqi_ctrl_info *ctrl_info)
 	struct pqi_device_capability *capability;
 	struct pqi_iu_layer_descriptor *sop_iu_layer_descriptor;
 
-	capability = kmalloc(sizeof(*capability), GFP_KERNEL);
+	capability = kmalloc_obj(*capability);
 	if (!capability)
 		return -ENOMEM;
 
@@ -5207,8 +5205,8 @@ static int pqi_alloc_io_resources(struct pqi_ctrl_info *ctrl_info)
 	struct device *dev;
 	struct pqi_io_request *io_request;
 
-	ctrl_info->io_request_pool = kcalloc(ctrl_info->max_io_slots,
-		sizeof(ctrl_info->io_request_pool[0]), GFP_KERNEL);
+	ctrl_info->io_request_pool = kzalloc_objs(ctrl_info->io_request_pool[0],
+						  ctrl_info->max_io_slots);
 
 	if (!ctrl_info->io_request_pool) {
 		dev_err(&ctrl_info->pci_dev->dev,
@@ -5562,14 +5560,25 @@ static void pqi_raid_io_complete(struct pqi_io_request *io_request,
 	pqi_scsi_done(scmd);
 }
 
+/*
+ * Adjust the timeout value for physical devices sent to the firmware
+ * by subtracting 3 seconds for timeouts greater than or equal to 8 seconds.
+ *
+ * This provides the firmware with additional time to attempt early recovery
+ * before the OS-level timeout occurs.
+ */
+#define ADJUST_SECS_TIMEOUT_VALUE(tv)   (((tv) >= 8) ? ((tv) - 3) : (tv))
+
 static int pqi_raid_submit_io(struct pqi_ctrl_info *ctrl_info,
 	struct pqi_scsi_dev *device, struct scsi_cmnd *scmd,
 	struct pqi_queue_group *queue_group, bool io_high_prio)
 {
 	int rc;
+	u32 timeout;
 	size_t cdb_length;
 	struct pqi_io_request *io_request;
 	struct pqi_raid_path_request *request;
+	struct request *rq;
 
 	io_request = pqi_alloc_io_request(ctrl_info, scmd);
 	if (!io_request)
@@ -5639,6 +5648,12 @@ static int pqi_raid_submit_io(struct pqi_ctrl_info *ctrl_info,
 	if (rc) {
 		pqi_free_io_request(io_request);
 		return SCSI_MLQUEUE_HOST_BUSY;
+	}
+
+	if (device->is_physical_device) {
+		rq = scsi_cmd_to_rq(scmd);
+		timeout = rq->timeout / HZ;
+		put_unaligned_le32(ADJUST_SECS_TIMEOUT_VALUE(timeout), &request->timeout);
 	}
 
 	pqi_start_io(ctrl_info, queue_group, RAID_PATH, io_request);
@@ -6037,7 +6052,8 @@ static bool pqi_is_parity_write_stream(struct pqi_ctrl_info *ctrl_info,
 	return false;
 }
 
-static int pqi_scsi_queue_command(struct Scsi_Host *shost, struct scsi_cmnd *scmd)
+static enum scsi_qc_status pqi_scsi_queue_command(struct Scsi_Host *shost,
+						  struct scsi_cmnd *scmd)
 {
 	int rc;
 	struct pqi_ctrl_info *ctrl_info;
@@ -7728,7 +7744,7 @@ static int pqi_get_ctrl_serial_number(struct pqi_ctrl_info *ctrl_info)
 	int rc;
 	struct bmic_sense_subsystem_info *sense_info;
 
-	sense_info = kzalloc(sizeof(*sense_info), GFP_KERNEL);
+	sense_info = kzalloc_obj(*sense_info);
 	if (!sense_info)
 		return -ENOMEM;
 
@@ -7751,7 +7767,7 @@ static int pqi_get_ctrl_product_details(struct pqi_ctrl_info *ctrl_info)
 	int rc;
 	struct bmic_identify_controller *identify;
 
-	identify = kmalloc(sizeof(*identify), GFP_KERNEL);
+	identify = kmalloc_obj(*identify);
 	if (!identify)
 		return -ENOMEM;
 
@@ -8962,7 +8978,8 @@ static int pqi_host_alloc_mem(struct pqi_ctrl_info *ctrl_info,
 	if (sg_count == 0 || sg_count > PQI_HOST_MAX_SG_DESCRIPTORS)
 		goto out;
 
-	host_memory_descriptor->host_chunk_virt_address = kmalloc(sg_count * sizeof(void *), GFP_KERNEL);
+	host_memory_descriptor->host_chunk_virt_address =
+		kmalloc_array(sg_count, sizeof(void *), GFP_KERNEL);
 	if (!host_memory_descriptor->host_chunk_virt_address)
 		goto out;
 

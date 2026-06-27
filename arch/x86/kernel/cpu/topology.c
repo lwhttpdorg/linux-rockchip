@@ -31,6 +31,7 @@
 #include <asm/mpspec.h>
 #include <asm/msr.h>
 #include <asm/smp.h>
+#include <asm/numa.h>
 
 #include "cpu.h"
 
@@ -74,15 +75,11 @@ bool arch_match_cpu_phys_id(int cpu, u64 phys_id)
 	return phys_id == (u64)cpuid_to_apicid[cpu];
 }
 
-#ifdef CONFIG_SMP
 static void cpu_mark_primary_thread(unsigned int cpu, unsigned int apicid)
 {
 	if (!(apicid & (__max_threads_per_core - 1)))
 		cpumask_set_cpu(cpu, &__cpu_primary_thread_mask);
 }
-#else
-static inline void cpu_mark_primary_thread(unsigned int cpu, unsigned int apicid) { }
-#endif
 
 /*
  * Convert the APIC ID to a domain level ID by masking out the low bits
@@ -496,11 +493,19 @@ void __init topology_init_possible_cpus(void)
 	set_nr_cpu_ids(allowed);
 
 	cnta = domain_weight(TOPO_PKG_DOMAIN);
-	cntb = domain_weight(TOPO_DIE_DOMAIN);
 	__max_logical_packages = cnta;
+
+	pr_info("Max. logical packages: %3u\n", __max_logical_packages);
+
+	cntb = num_phys_nodes();
+	__num_nodes_per_package = DIV_ROUND_UP(cntb, cnta);
+
+	pr_info("Max. logical nodes:    %3u\n", cntb);
+	pr_info("Num. nodes per package:%3u\n", __num_nodes_per_package);
+
+	cntb = domain_weight(TOPO_DIE_DOMAIN);
 	__max_dies_per_package = 1U << (get_count_order(cntb) - get_count_order(cnta));
 
-	pr_info("Max. logical packages: %3u\n", cnta);
 	pr_info("Max. logical dies:     %3u\n", cntb);
 	pr_info("Max. dies per package: %3u\n", __max_dies_per_package);
 

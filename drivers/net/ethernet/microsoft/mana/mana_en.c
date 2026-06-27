@@ -355,9 +355,6 @@ netdev_tx_t mana_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	if (skb_cow_head(skb, MANA_HEADROOM))
 		goto tx_drop_count;
 
-	if (unlikely(ipv6_hopopt_jumbo_remove(skb)))
-		goto tx_drop_count;
-
 	txq = &apc->tx_qp[txq_idx].txq;
 	gdma_sq = txq->gdma_sq;
 	cq = &apc->tx_qp[txq_idx].tx_cq;
@@ -494,9 +491,8 @@ netdev_tx_t mana_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	if (pkg.wqe_req.num_sge <= ARRAY_SIZE(pkg.sgl_array)) {
 		pkg.wqe_req.sgl = pkg.sgl_array;
 	} else {
-		pkg.sgl_ptr = kmalloc_array(pkg.wqe_req.num_sge,
-					    sizeof(struct gdma_sge),
-					    GFP_ATOMIC);
+		pkg.sgl_ptr = kmalloc_objs(struct gdma_sge, pkg.wqe_req.num_sge,
+					   GFP_ATOMIC);
 		if (!pkg.sgl_ptr)
 			goto tx_drop_count;
 
@@ -525,9 +521,9 @@ netdev_tx_t mana_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 
 	if (err) {
 		(void)skb_dequeue_tail(&txq->pending_skbs);
+		mana_unmap_skb(skb, apc);
 		netdev_warn(ndev, "Failed to post TX OOB: %d\n", err);
-		err = NETDEV_TX_BUSY;
-		goto tx_busy;
+		goto free_sgl_ptr;
 	}
 
 	err = NETDEV_TX_OK;
@@ -547,7 +543,6 @@ netdev_tx_t mana_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	tx_stats->bytes += len + ((num_gso_seg - 1) * gso_hs);
 	u64_stats_update_end(&tx_stats->syncp);
 
-tx_busy:
 	if (netif_tx_queue_stopped(net_txq) && mana_can_tx(gdma_sq)) {
 		netif_tx_wake_queue(net_txq);
 		apc->eth_stats.wake_queue++;
@@ -815,7 +810,7 @@ int mana_pre_alloc_rxbufs(struct mana_port_context *mpc, int new_mtu, int num_qu
 	if (!mpc->rxbufs_pre)
 		goto error;
 
-	mpc->das_pre = kmalloc_array(num_rxb, sizeof(dma_addr_t), GFP_KERNEL);
+	mpc->das_pre = kmalloc_objs(dma_addr_t, num_rxb);
 	if (!mpc->das_pre)
 		goto error;
 
@@ -949,7 +944,7 @@ static int mana_shaper_del(struct net_shaper_binding *binding,
 		/* Reset mana port context parameters */
 		apc->handle.id = 0;
 		apc->handle.scope = NET_SHAPER_SCOPE_UNSPEC;
-		apc->speed = 0;
+		apc->speed = apc->max_speed;
 	}
 
 	return err;
@@ -1007,8 +1002,7 @@ static void mana_cleanup_indir_table(struct mana_port_context *apc)
 
 static int mana_init_port_context(struct mana_port_context *apc)
 {
-	apc->rxqs = kcalloc(apc->num_queues, sizeof(struct mana_rxq *),
-			    GFP_KERNEL);
+	apc->rxqs = kzalloc_objs(struct mana_rxq *, apc->num_queues);
 
 	return !apc->rxqs ? -ENOMEM : 0;
 }
@@ -1645,8 +1639,7 @@ static int mana_create_eq(struct mana_context *ac)
 	int err;
 	int i;
 
-	ac->eqs = kcalloc(gc->max_num_queues, sizeof(struct mana_eq),
-			  GFP_KERNEL);
+	ac->eqs = kzalloc_objs(struct mana_eq, gc->max_num_queues);
 	if (!ac->eqs)
 		return -ENOMEM;
 
@@ -1748,7 +1741,7 @@ static int mana_move_wq_tail(struct gdma_queue *wq, u32 num_units)
 	return 0;
 }
 
-static void mana_unmap_skb(struct sk_buff *skb, struct mana_port_context *apc)
+void mana_unmap_skb(struct sk_buff *skb, struct mana_port_context *apc)
 {
 	struct mana_skb_head *ash = (struct mana_skb_head *)skb->head;
 	struct gdma_context *gc = apc->ac->gdma_dev->gdma_context;
@@ -2356,8 +2349,7 @@ static int mana_create_txq(struct mana_port_context *apc,
 	int err;
 	int i;
 
-	apc->tx_qp = kcalloc(apc->num_queues, sizeof(struct mana_tx_qp),
-			     GFP_KERNEL);
+	apc->tx_qp = kzalloc_objs(struct mana_tx_qp, apc->num_queues);
 	if (!apc->tx_qp)
 		return -ENOMEM;
 
@@ -2667,8 +2659,7 @@ static struct mana_rxq *mana_create_rxq(struct mana_port_context *apc,
 
 	gc = gd->gdma_context;
 
-	rxq = kzalloc(struct_size(rxq, rx_oobs, apc->rx_queue_size),
-		      GFP_KERNEL);
+	rxq = kzalloc_flex(*rxq, rx_oobs, apc->rx_queue_size);
 	if (!rxq)
 		return NULL;
 
@@ -2886,7 +2877,7 @@ static int mana_rss_table_alloc(struct mana_port_context *apc)
 	if (!apc->indir_table)
 		return -ENOMEM;
 
-	apc->rxobj_table = kcalloc(apc->indir_table_sz, sizeof(mana_handle_t), GFP_KERNEL);
+	apc->rxobj_table = kzalloc_objs(mana_handle_t, apc->indir_table_sz);
 	if (!apc->rxobj_table) {
 		kfree(apc->indir_table);
 		return -ENOMEM;
@@ -3470,7 +3461,7 @@ static int add_adev(struct gdma_dev *gd, const char *name)
 	int ret;
 	int id;
 
-	madev = kzalloc(sizeof(*madev), GFP_KERNEL);
+	madev = kzalloc_obj(*madev);
 	if (!madev)
 		return -ENOMEM;
 
@@ -3564,7 +3555,7 @@ int mana_rdma_service_event(struct gdma_context *gc, enum gdma_service_type even
 		return 0;
 	}
 
-	serv_work = kzalloc(sizeof(*serv_work), GFP_ATOMIC);
+	serv_work = kzalloc_obj(*serv_work, GFP_ATOMIC);
 	if (!serv_work)
 		return -ENOMEM;
 
@@ -3615,7 +3606,7 @@ int mana_probe(struct gdma_dev *gd, bool resuming)
 		return err;
 
 	if (!resuming) {
-		ac = kzalloc(sizeof(*ac), GFP_KERNEL);
+		ac = kzalloc_obj(*ac);
 		if (!ac)
 			return -ENOMEM;
 

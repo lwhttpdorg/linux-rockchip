@@ -157,7 +157,7 @@ gpio_aggregator_line_alloc(struct gpio_aggregator *parent, unsigned int idx,
 {
 	struct gpio_aggregator_line *line;
 
-	line = kzalloc(sizeof(*line), GFP_KERNEL);
+	line = kzalloc_obj(*line);
 	if (!line)
 		return ERR_PTR(-ENOMEM);
 
@@ -915,8 +915,7 @@ static int gpio_aggregator_activate(struct gpio_aggregator *aggr)
 	if (gpio_aggregator_count_lines(aggr) == 0)
 		return -EINVAL;
 
-	aggr->lookups = kzalloc(struct_size(aggr->lookups, table, 1),
-				GFP_KERNEL);
+	aggr->lookups = kzalloc_flex(*aggr->lookups, table, 1);
 	if (!aggr->lookups)
 		return -ENOMEM;
 
@@ -1244,7 +1243,7 @@ gpio_aggregator_line_release(struct config_item *item)
 	kfree(line);
 }
 
-static struct configfs_item_operations gpio_aggregator_line_item_ops = {
+static const struct configfs_item_operations gpio_aggregator_line_item_ops = {
 	.release	= gpio_aggregator_line_release,
 };
 
@@ -1265,7 +1264,7 @@ static void gpio_aggregator_device_release(struct config_item *item)
 	gpio_aggregator_free(aggr);
 }
 
-static struct configfs_item_operations gpio_aggregator_device_item_ops = {
+static const struct configfs_item_operations gpio_aggregator_device_item_ops = {
 	.release	= gpio_aggregator_device_release,
 };
 
@@ -1310,7 +1309,7 @@ gpio_aggregator_device_make_group(struct config_group *group, const char *name)
 	return &line->group;
 }
 
-static struct configfs_group_operations gpio_aggregator_device_group_ops = {
+static const struct configfs_group_operations gpio_aggregator_device_group_ops = {
 	.make_group	= gpio_aggregator_device_make_group,
 };
 
@@ -1345,7 +1344,7 @@ gpio_aggregator_make_group(struct config_group *group, const char *name)
 	return &aggr->group;
 }
 
-static struct configfs_group_operations gpio_aggregator_group_ops = {
+static const struct configfs_group_operations gpio_aggregator_group_ops = {
 	.make_group	= gpio_aggregator_make_group,
 };
 
@@ -1474,8 +1473,7 @@ static ssize_t gpio_aggregator_new_device_store(struct device_driver *driver,
 	memcpy(aggr->args, buf, count + 1);
 
 	aggr->init_via_sysfs = true;
-	aggr->lookups = kzalloc(struct_size(aggr->lookups, table, 1),
-				GFP_KERNEL);
+	aggr->lookups = kzalloc_flex(*aggr->lookups, table, 1);
 	if (!aggr->lookups) {
 		res = -ENOMEM;
 		goto free_ga;

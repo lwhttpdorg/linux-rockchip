@@ -133,6 +133,46 @@ unlock:
 	return ret;
 }
 
+static ssize_t queue_async_depth_show(struct gendisk *disk, char *page)
+{
+	guard(mutex)(&disk->queue->elevator_lock);
+
+	return queue_var_show(disk->queue->async_depth, page);
+}
+
+static ssize_t
+queue_async_depth_store(struct gendisk *disk, const char *page, size_t count)
+{
+	struct request_queue *q = disk->queue;
+	unsigned int memflags;
+	unsigned long nr;
+	int ret;
+
+	if (!queue_is_mq(q))
+		return -EINVAL;
+
+	ret = queue_var_store(&nr, page, count);
+	if (ret < 0)
+		return ret;
+
+	if (nr == 0)
+		return -EINVAL;
+
+	memflags = blk_mq_freeze_queue(q);
+	scoped_guard(mutex, &q->elevator_lock) {
+		if (q->elevator) {
+			q->async_depth = min(q->nr_requests, nr);
+			if (q->elevator->type->ops.depth_updated)
+				q->elevator->type->ops.depth_updated(q);
+		} else {
+			ret = -EINVAL;
+		}
+	}
+	blk_mq_unfreeze_queue(q, memflags);
+
+	return ret;
+}
+
 static ssize_t queue_ra_show(struct gendisk *disk, char *page)
 {
 	ssize_t ret;
@@ -350,6 +390,36 @@ static ssize_t queue_nr_zones_show(struct gendisk *disk, char *page)
 	return queue_var_show(disk_nr_zones(disk), page);
 }
 
+static ssize_t queue_zoned_qd1_writes_show(struct gendisk *disk, char *page)
+{
+	return queue_var_show(!!blk_queue_zoned_qd1_writes(disk->queue),
+			      page);
+}
+
+static ssize_t queue_zoned_qd1_writes_store(struct gendisk *disk,
+					    const char *page, size_t count)
+{
+	struct request_queue *q = disk->queue;
+	unsigned long qd1_writes;
+	unsigned int memflags;
+	ssize_t ret;
+
+	ret = queue_var_store(&qd1_writes, page, count);
+	if (ret < 0)
+		return ret;
+
+	memflags = blk_mq_freeze_queue(q);
+	blk_mq_quiesce_queue(q);
+	if (qd1_writes)
+		blk_queue_flag_set(QUEUE_FLAG_ZONED_QD1_WRITES, q);
+	else
+		blk_queue_flag_clear(QUEUE_FLAG_ZONED_QD1_WRITES, q);
+	blk_mq_unquiesce_queue(q);
+	blk_mq_unfreeze_queue(q, memflags);
+
+	return count;
+}
+
 static ssize_t queue_iostats_passthrough_show(struct gendisk *disk, char *page)
 {
 	return queue_var_show(!!blk_queue_passthrough_stat(disk->queue), page);
@@ -538,6 +608,7 @@ static struct queue_sysfs_entry _prefix##_entry = {	\
 }
 
 QUEUE_RW_ENTRY(queue_requests, "nr_requests");
+QUEUE_RW_ENTRY(queue_async_depth, "async_depth");
 QUEUE_RW_ENTRY(queue_ra, "read_ahead_kb");
 QUEUE_LIM_RW_ENTRY(queue_max_sectors, "max_sectors_kb");
 QUEUE_LIM_RO_ENTRY(queue_max_hw_sectors, "max_hw_sectors_kb");
@@ -576,6 +647,7 @@ QUEUE_LIM_RO_ENTRY(queue_max_zone_append_sectors, "zone_append_max_bytes");
 QUEUE_LIM_RO_ENTRY(queue_zone_write_granularity, "zone_write_granularity");
 
 QUEUE_LIM_RO_ENTRY(queue_zoned, "zoned");
+QUEUE_RW_ENTRY(queue_zoned_qd1_writes, "zoned_qd1_writes");
 QUEUE_RO_ENTRY(queue_nr_zones, "nr_zones");
 QUEUE_LIM_RO_ENTRY(queue_max_open_zones, "max_open_zones");
 QUEUE_LIM_RO_ENTRY(queue_max_active_zones, "max_active_zones");
@@ -642,11 +714,8 @@ out:
 static ssize_t queue_wb_lat_store(struct gendisk *disk, const char *page,
 				  size_t count)
 {
-	struct request_queue *q = disk->queue;
-	struct rq_qos *rqos;
 	ssize_t ret;
 	s64 val;
-	unsigned int memflags;
 
 	ret = queue_var_store64(&val, page);
 	if (ret < 0)
@@ -654,40 +723,8 @@ static ssize_t queue_wb_lat_store(struct gendisk *disk, const char *page,
 	if (val < -1)
 		return -EINVAL;
 
-	/*
-	 * Ensure that the queue is idled, in case the latency update
-	 * ends up either enabling or disabling wbt completely. We can't
-	 * have IO inflight if that happens.
-	 */
-	memflags = blk_mq_freeze_queue(q);
-
-	rqos = wbt_rq_qos(q);
-	if (!rqos) {
-		ret = wbt_init(disk);
-		if (ret)
-			goto out;
-	}
-
-	ret = count;
-	if (val == -1)
-		val = wbt_default_latency_nsec(q);
-	else if (val >= 0)
-		val *= 1000ULL;
-
-	if (wbt_get_min_lat(q) == val)
-		goto out;
-
-	blk_mq_quiesce_queue(q);
-
-	mutex_lock(&disk->rqos_state_mutex);
-	wbt_set_min_lat(q, val);
-	mutex_unlock(&disk->rqos_state_mutex);
-
-	blk_mq_unquiesce_queue(q);
-out:
-	blk_mq_unfreeze_queue(q, memflags);
-
-	return ret;
+	ret = wbt_set_lat(disk, val);
+	return ret ? ret : count;
 }
 
 QUEUE_RW_ENTRY(queue_wb_lat, "wbt_lat_usec");
@@ -748,6 +785,7 @@ static struct attribute *queue_attrs[] = {
 	&queue_nomerges_entry.attr,
 	&queue_poll_entry.attr,
 	&queue_poll_delay_entry.attr,
+	&queue_zoned_qd1_writes_entry.attr,
 
 	NULL,
 };
@@ -760,6 +798,7 @@ static struct attribute *blk_mq_queue_attrs[] = {
 	 */
 	&elv_iosched_entry.attr,
 	&queue_requests_entry.attr,
+	&queue_async_depth_entry.attr,
 #ifdef CONFIG_BLK_WBT
 	&queue_wb_lat_entry.attr,
 #endif
@@ -779,7 +818,8 @@ static umode_t queue_attr_visible(struct kobject *kobj, struct attribute *attr,
 	struct request_queue *q = disk->queue;
 
 	if ((attr == &queue_max_open_zones_entry.attr ||
-	     attr == &queue_max_active_zones_entry.attr) &&
+	     attr == &queue_max_active_zones_entry.attr ||
+	     attr == &queue_zoned_qd1_writes_entry.attr) &&
 	    !blk_queue_is_zoned(q))
 		return 0;
 
@@ -891,13 +931,13 @@ static void blk_debugfs_remove(struct gendisk *disk)
 {
 	struct request_queue *q = disk->queue;
 
-	mutex_lock(&q->debugfs_mutex);
+	blk_debugfs_lock_nomemsave(q);
 	blk_trace_shutdown(q);
 	debugfs_remove_recursive(q->debugfs_dir);
 	q->debugfs_dir = NULL;
 	q->sched_debugfs_dir = NULL;
 	q->rqos_debugfs_dir = NULL;
-	mutex_unlock(&q->debugfs_mutex);
+	blk_debugfs_unlock_nomemrestore(q);
 }
 
 /**
@@ -907,6 +947,7 @@ static void blk_debugfs_remove(struct gendisk *disk)
 int blk_register_queue(struct gendisk *disk)
 {
 	struct request_queue *q = disk->queue;
+	unsigned int memflags;
 	int ret;
 
 	ret = kobject_add(&disk->queue_kobj, &disk_to_dev(disk)->kobj, "queue");
@@ -920,11 +961,11 @@ int blk_register_queue(struct gendisk *disk)
 	}
 	mutex_lock(&q->sysfs_lock);
 
-	mutex_lock(&q->debugfs_mutex);
+	memflags = blk_debugfs_lock(q);
 	q->debugfs_dir = debugfs_create_dir(disk->disk_name, blk_debugfs_root);
 	if (queue_is_mq(q))
 		blk_mq_debugfs_register(q);
-	mutex_unlock(&q->debugfs_mutex);
+	blk_debugfs_unlock(q, memflags);
 
 	ret = disk_register_independent_access_ranges(disk);
 	if (ret)

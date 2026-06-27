@@ -427,7 +427,9 @@ bool f2fs_need_inode_block_update(struct f2fs_sb_info *sbi, nid_t ino)
 	struct f2fs_nm_info *nm_i = NM_I(sbi);
 	struct nat_entry *e;
 	bool need_update = true;
+	struct f2fs_lock_context lc;
 
+	f2fs_down_read_trace(&sbi->node_write, &lc);
 	f2fs_down_read(&nm_i->nat_tree_lock);
 	e = __lookup_nat_cache(nm_i, ino, false);
 	if (e && get_nat_flag(e, HAS_LAST_FSYNC) &&
@@ -435,6 +437,7 @@ bool f2fs_need_inode_block_update(struct f2fs_sb_info *sbi, nid_t ino)
 			 get_nat_flag(e, HAS_FSYNCED_INODE)))
 		need_update = false;
 	f2fs_up_read(&nm_i->nat_tree_lock);
+	f2fs_up_read_trace(&sbi->node_write, &lc);
 	return need_update;
 }
 
@@ -641,6 +644,17 @@ sanity_check:
 			ni->ino, ni->nid, ni->blk_addr, ni->version, ni->flag);
 		f2fs_handle_error(sbi, ERROR_INCONSISTENT_NAT);
 		return -EFSCORRUPTED;
+	}
+
+	if (unlikely(f2fs_quota_file(sbi, ni->nid) &&
+		!__is_valid_data_blkaddr(ni->blk_addr))) {
+		set_sbi_flag(sbi, SBI_NEED_FSCK);
+		f2fs_err_ratelimited(sbi,
+			"f2fs_get_node_info of %pS: inconsistent nat entry from qf_ino, "
+			"ino:%u, nid:%u, blkaddr:%u, ver:%u, flag:%u",
+			__builtin_return_address(0),
+			ni->ino, ni->nid, ni->blk_addr, ni->version, ni->flag);
+		f2fs_handle_error(sbi, ERROR_INCONSISTENT_NAT);
 	}
 
 	/* cache nat entry */
@@ -1504,20 +1518,29 @@ int f2fs_sanity_check_node_footer(struct f2fs_sb_info *sbi,
 					struct folio *folio, pgoff_t nid,
 					enum node_type ntype, bool in_irq)
 {
+	bool is_inode, is_xnode;
+
 	if (unlikely(nid != nid_of_node(folio)))
 		goto out_err;
 
+	is_inode = IS_INODE(folio);
+	is_xnode = f2fs_has_xattr_block(ofs_of_node(folio));
+
 	switch (ntype) {
+	case NODE_TYPE_REGULAR:
+		if (is_inode && is_xnode)
+			goto out_err;
+		break;
 	case NODE_TYPE_INODE:
-		if (!IS_INODE(folio))
+		if (!is_inode || is_xnode)
 			goto out_err;
 		break;
 	case NODE_TYPE_XATTR:
-		if (!f2fs_has_xattr_block(ofs_of_node(folio)))
+		if (is_inode || !is_xnode)
 			goto out_err;
 		break;
 	case NODE_TYPE_NON_INODE:
-		if (IS_INODE(folio))
+		if (is_inode)
 			goto out_err;
 		break;
 	default:
@@ -1729,6 +1752,7 @@ static bool __write_node_folio(struct folio *folio, bool atomic, bool do_fsync,
 		.io_type = io_type,
 		.io_wbc = wbc,
 	};
+	struct f2fs_lock_context lc;
 	unsigned int seq;
 
 	trace_f2fs_writepage(folio, NODE);
@@ -1763,13 +1787,13 @@ static bool __write_node_folio(struct folio *folio, bool atomic, bool do_fsync,
 	if (f2fs_get_node_info(sbi, nid, &ni, !do_balance))
 		goto redirty_out;
 
-	f2fs_down_read(&sbi->node_write);
+	f2fs_down_read_trace(&sbi->node_write, &lc);
 
 	/* This page is already truncated */
 	if (unlikely(ni.blk_addr == NULL_ADDR)) {
 		folio_clear_uptodate(folio);
 		dec_page_count(sbi, F2FS_DIRTY_NODES);
-		f2fs_up_read(&sbi->node_write);
+		f2fs_up_read_trace(&sbi->node_write, &lc);
 		folio_unlock(folio);
 		return true;
 	}
@@ -1777,7 +1801,7 @@ static bool __write_node_folio(struct folio *folio, bool atomic, bool do_fsync,
 	if (__is_valid_data_blkaddr(ni.blk_addr) &&
 		!f2fs_is_valid_blkaddr(sbi, ni.blk_addr,
 					DATA_GENERIC_ENHANCE)) {
-		f2fs_up_read(&sbi->node_write);
+		f2fs_up_read_trace(&sbi->node_write, &lc);
 		goto redirty_out;
 	}
 
@@ -1803,7 +1827,7 @@ static bool __write_node_folio(struct folio *folio, bool atomic, bool do_fsync,
 	f2fs_do_write_node_page(nid, &fio);
 	set_node_addr(sbi, &ni, fio.new_blkaddr, is_fsync_dnode(folio));
 	dec_page_count(sbi, F2FS_DIRTY_NODES);
-	f2fs_up_read(&sbi->node_write);
+	f2fs_up_read_trace(&sbi->node_write, &lc);
 
 	folio_unlock(folio);
 
@@ -3163,7 +3187,7 @@ int f2fs_flush_nat_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	struct f2fs_journal *journal = curseg->journal;
 	struct nat_entry_set *setvec[NAT_VEC_SIZE];
 	struct nat_entry_set *set, *tmp;
-	unsigned int found;
+	unsigned int found, entry_count = 0;
 	nid_t set_idx = 0;
 	LIST_HEAD(sets);
 	int err = 0;
@@ -3203,6 +3227,18 @@ int f2fs_flush_nat_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 					MAX_NAT_JENTRIES(sbi, journal));
 	}
 
+	/*
+	 * Readahead the current NAT block to prevent read requests from
+	 * being issued and waited on one by one.
+	 */
+	list_for_each_entry(set, &sets, set_list) {
+		entry_count += set->entry_cnt;
+		if (!enabled_nat_bits(sbi, cpc) &&
+			__has_cursum_space(sbi, journal,
+					entry_count, NAT_JOURNAL))
+			continue;
+		f2fs_ra_meta_pages(sbi, set->set, 1, META_NAT, true);
+	}
 	/* flush dirty nats in nat entry set */
 	list_for_each_entry_safe(set, tmp, &sets, set_list) {
 		err = __flush_nat_entry_set(sbi, set, cpc);
