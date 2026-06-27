@@ -2814,7 +2814,6 @@ static const struct of_device_id mpp_rkvenc_dt_match[] = {
 		.compatible = "rockchip,rkv-encoder-v2",
 		.data = &rkvenc_v2_data,
 	},
-#ifdef CONFIG_CPU_RK3576
 	{
 		.compatible = "rockchip,rkv-encoder-rk3576-core",
 		.data = &rkvenc_rk3576_ccu_data,
@@ -2826,26 +2825,18 @@ static const struct of_device_id mpp_rkvenc_dt_match[] = {
 		.compatible = "rockchip,rkv-encoder-rk3576",
 		.data = &rkvenc_510_data,
 	},
-#endif
-#ifdef CONFIG_CPU_RV1126B
 	{
 		.compatible = "rockchip,rkv-encoder-rv1126b",
 		.data = &rkvenc_511_data,
 	},
-#endif
-#ifdef CONFIG_CPU_RK3528
 	{
 		.compatible = "rockchip,rkv-encoder-rk3528",
 		.data = &rkvenc_540c_data,
 	},
-#endif
-#ifdef CONFIG_CPU_RK3562
 	{
 		.compatible = "rockchip,rkv-encoder-rk3562",
 		.data = &rkvenc_540c_data,
 	},
-#endif
-#ifdef CONFIG_CPU_RK3588
 	{
 		.compatible = "rockchip,rkv-encoder-v2-core",
 		.data = &rkvenc_ccu_data,
@@ -2853,7 +2844,6 @@ static const struct of_device_id mpp_rkvenc_dt_match[] = {
 	{
 		.compatible = "rockchip,rkv-encoder-v2-ccu",
 	},
-#endif
 	{},
 };
 

@@ -1685,42 +1685,30 @@ static const struct of_device_id mpp_rkvdec2_dt_match[] = {
 		.compatible = "rockchip,rkv-decoder-v2",
 		.data = &rkvdec_v2_data,
 	},
-#ifdef CONFIG_CPU_RK3568
 	{
 		.compatible = "rockchip,rkv-decoder-rk3568",
 		.data = &rkvdec_rk3568_data,
 	},
-#endif
-#ifdef CONFIG_CPU_RK3588
 	{
 		.compatible = "rockchip,rkv-decoder-v2-ccu",
 		.data = &rkvdec_rk3588_data,
 	},
-#endif
-#ifdef CONFIG_CPU_RK3528
 	{
 		.compatible = "rockchip,rkv-decoder-rk3528",
 		.data = &rkvdec_rk3528_data,
 	},
-#endif
-#ifdef CONFIG_CPU_RK3562
 	{
 		.compatible = "rockchip,rkv-decoder-rk3562",
 		.data = &rkvdec_rk3562_data,
 	},
-#endif
-#ifdef CONFIG_CPU_RK3576
 	{
 		.compatible = "rockchip,rkv-decoder-rk3576",
 		.data = &rkvdec_rk3576_data,
 	},
-#endif
-#ifdef CONFIG_CPU_RV1126B
 	{
 		.compatible = "rockchip,rkv-decoder-rv1126b",
 		.data = &rkvdec_rv1126b_data,
 	},
-#endif
 	{},
 };
 
