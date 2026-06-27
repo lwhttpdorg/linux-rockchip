@@ -490,6 +490,11 @@
 	status = "okay";
 };
 
+&display_subsystem {
+	clocks = <&hdptxphy0>, <&hdptxphy1>;
+	clock-names = "hdmi0_phy_pll", "hdmi1_phy_pll";
+};
+
 &combphy1_ps {
 	status = "okay";
 };
@@ -611,6 +616,7 @@
 };
 
 &hdmi0 {
+	enable-gpios = <&gpio4 RK_PB1 GPIO_ACTIVE_HIGH>;
 	status = "okay";
 };
 
@@ -1676,6 +1682,8 @@
 };
 
 &vop {
+	disable-win-move;
+	post-init-providers = <&hdmi0 &hdmi1>;
 	status = "okay";
 };
 

@@ -706,7 +706,9 @@ static int rockchip_pd_power_on(struct generic_pm_domain *domain)
 
 	ret = rockchip_pd_regulator_enable(pd);
 	if (ret) {
-		dev_err(pd->pmu->dev, "Failed to enable supply: %d\n", ret);
+		if (ret != -EPROBE_DEFER)
+			dev_err(pd->pmu->dev, "Failed to enable supply: %d\n",
+				ret);
 		return ret;
 	}
 

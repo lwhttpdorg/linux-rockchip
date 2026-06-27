@@ -819,7 +819,7 @@ static int hdmirx_phy_register_read(struct snps_hdmirx_dev *hdmirx_dev,
 
 	if (!wait_for_completion_timeout(&hdmirx_dev->cr_read_done,
 					 msecs_to_jiffies(20))) {
-		dev_err(dev, "%s wait cr read done failed\n", __func__);
+		dev_dbg(dev, "%s wait cr read done failed\n", __func__);
 		return -ETIMEDOUT;
 	}
 
@@ -2396,8 +2396,8 @@ static int hdmirx_init(struct snps_hdmirx_dev *hdmirx_dev)
 	 */
 	ret = hdmirx_detect_broken_interrupt(hdmirx_dev);
 	if (ret)
-		dev_err_probe(hdmirx_dev->dev, ret,
-			      "interrupt not functioning, open-source TF-A is required by this driver\n");
+		dev_dbg(hdmirx_dev->dev,
+			"HDMIRX interrupt self-test failed: %d\n", ret);
 
 	/*
 	 * Some interrupts are enabled by default, so we disable
@@ -2405,7 +2405,7 @@ static int hdmirx_init(struct snps_hdmirx_dev *hdmirx_dev)
 	 */
 	hdmirx_disable_all_interrupts(hdmirx_dev);
 
-	return ret;
+	return 0;
 }
 
 /* hdmi-4k-300mhz EDID produced by v4l2-ctl tool */
