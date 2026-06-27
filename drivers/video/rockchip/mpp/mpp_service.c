@@ -27,6 +27,14 @@
 #define MPP_CLASS_NAME		"mpp_class"
 #define MPP_SERVICE_NAME	"mpp_service"
 
+static char *mpp_devnode(const struct device *dev, umode_t *mode)
+{
+	if (mode)
+		*mode = 0666;
+
+	return NULL;
+}
+
 #define HAS_RKVDEC	IS_ENABLED(CONFIG_ROCKCHIP_MPP_RKVDEC)
 #define HAS_RKVENC	IS_ENABLED(CONFIG_ROCKCHIP_MPP_RKVENC)
 #define HAS_VDPU1	IS_ENABLED(CONFIG_ROCKCHIP_MPP_VDPU1)
@@ -416,6 +424,7 @@ static int mpp_service_probe(struct platform_device *pdev)
 	srv->cls = class_create(MPP_CLASS_NAME);
 	if (PTR_ERR_OR_ZERO(srv->cls))
 		return PTR_ERR(srv->cls);
+	srv->cls->devnode = mpp_devnode;
 
 	of_property_read_u32(np, "rockchip,taskqueue-count",
 			     &srv->taskqueue_cnt);

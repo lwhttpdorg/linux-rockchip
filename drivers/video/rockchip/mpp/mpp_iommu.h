@@ -16,14 +16,8 @@
 #include <linux/interrupt.h>
 #include <linux/iova.h>
 
-enum iommu_dma_cookie_type {
-	IOMMU_DMA_IOVA_COOKIE,
-	IOMMU_DMA_MSI_COOKIE,
-};
-
 /* Keep in mind: member order must keep align with struct iommu_dma_cookie */
 struct mpp_iommu_dma_cookie {
-	enum iommu_dma_cookie_type type;
 	/* Full allocator for IOMMU_DMA_IOVA_COOKIE */
 	struct iova_domain iovad;
 };

@@ -27,6 +27,8 @@
 		jpege3 = &vepu121_3;
 		mmc0 = &sdhci;
 		mmc1 = &sdmmc;
+		rkvdec0 = &vdec0;
+		rkvdec1 = &rkvdec1;
 		vdpu0 = &vdpu;
 		vepu0 = &vpu121;
 	};
@@ -140,6 +142,8 @@
 		rockchip,task-capacity = <8>;
 		power-domains = <&power RK3588_PD_VENC0>;
 		operating-points-v2 = <&venc_opp_table>;
+		venc-supply = <&vdd_vdenc_s0>;
+		mem-supply = <&vdd_vdenc_mem_s0>;
 		status = "okay";
 	};
 
@@ -182,6 +186,8 @@
 		rockchip,task-capacity = <8>;
 		power-domains = <&power RK3588_PD_VENC1>;
 		operating-points-v2 = <&venc_opp_table>;
+		venc-supply = <&vdd_vdenc_s0>;
+		mem-supply = <&vdd_vdenc_mem_s0>;
 		status = "okay";
 	};
 

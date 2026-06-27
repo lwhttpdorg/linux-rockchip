@@ -22,6 +22,18 @@ config ROCKCHIP_IODOMAIN
 	  necessary for the io domain setting of the SoC to match the
 	  voltage supplied by the regulators.
 
+config ROCKCHIP_OPP
+	tristate "Rockchip OPP select support"
+	depends on PM_DEVFREQ
+	depends on PM_OPP
+	help
+	  Say y here to enable Rockchip OPP glue for vendor drivers that use
+	  Rockchip-specific OPP helpers.
+	  This registers clocks, regulators and OPP tables with the generic
+	  OPP core so devices such as Rockchip MPP codecs can use devfreq.
+	  The mainline glue intentionally leaves downstream-only leakage and
+	  PVTM binning unsupported.
+
 config ROCKCHIP_DTPM
 	tristate "Rockchip DTPM hierarchy"
 	depends on DTPM && m

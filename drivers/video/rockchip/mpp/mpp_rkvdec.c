@@ -1159,11 +1159,7 @@ static int rkvdec_init(struct mpp_dev *mpp)
 	if (!dec->rst_h)
 		mpp_err("No hclk reset resource define\n");
 	dec->rst_niu_a = mpp_reset_control_get(mpp, RST_TYPE_NIU_A, "niu_a");
-	if (!dec->rst_niu_a)
-		mpp_err("No niu aclk reset resource define\n");
 	dec->rst_niu_h = mpp_reset_control_get(mpp, RST_TYPE_NIU_H, "niu_h");
-	if (!dec->rst_niu_h)
-		mpp_err("No niu hclk reset resource define\n");
 	dec->rst_core = mpp_reset_control_get(mpp, RST_TYPE_CORE, "video_core");
 	if (!dec->rst_core)
 		mpp_err("No core reset resource define\n");

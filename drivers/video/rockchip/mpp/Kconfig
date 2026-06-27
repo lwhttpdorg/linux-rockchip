@@ -22,6 +22,7 @@ config ROCKCHIP_MPP_RKVDEC
 
 config ROCKCHIP_MPP_RKVDEC2
 	bool "RKV decoder v2 device driver"
+	select ROCKCHIP_OPP if PM_DEVFREQ
 	help
 	  rockchip mpp rkv combo decoder v2.
 
@@ -32,6 +33,7 @@ config ROCKCHIP_MPP_RKVENC
 
 config ROCKCHIP_MPP_RKVENC2
 	bool "RKV encoder v2 device driver"
+	select ROCKCHIP_OPP if PM_DEVFREQ
 	help
 	  rockchip mpp rkv combo encoder v2.
 

@@ -3100,7 +3100,7 @@ static int rkvenc_core_probe(struct platform_device *pdev)
 	ret = devm_request_threaded_irq(dev, mpp->irq,
 					mpp_dev_irq,
 					NULL,
-					IRQF_ONESHOT,
+					0,
 					dev_name(dev), mpp);
 	if (ret) {
 		dev_err(dev, "register interrupter runtime failed\n");

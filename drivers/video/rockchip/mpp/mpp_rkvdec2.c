@@ -1246,11 +1246,7 @@ static int rkvdec2_init(struct mpp_dev *mpp)
 	if (!dec->rst_h)
 		mpp_err("No hclk reset resource define\n");
 	dec->rst_niu_a = mpp_reset_control_get(mpp, RST_TYPE_NIU_A, "niu_a");
-	if (!dec->rst_niu_a)
-		mpp_err("No niu aclk reset resource define\n");
 	dec->rst_niu_h = mpp_reset_control_get(mpp, RST_TYPE_NIU_H, "niu_h");
-	if (!dec->rst_niu_h)
-		mpp_err("No niu hclk reset resource define\n");
 	dec->rst_core = mpp_reset_control_get(mpp, RST_TYPE_CORE, "video_core");
 	if (!dec->rst_core)
 		mpp_err("No core reset resource define\n");
@@ -1863,14 +1859,14 @@ static int rkvdec2_alloc_rcbbuf(struct platform_device *pdev, struct rkvdec2_dev
 	dec->sram_size = sram_size;
 	dec->rcb_size = rcb_size;
 	dec->rcb_iova = iova;
-	dev_info(dev, "sram_start %pa\n", &sram_start);
-	dev_info(dev, "rcb_iova %pad\n", &dec->rcb_iova);
-	dev_info(dev, "sram_size %u\n", dec->sram_size);
-	dev_info(dev, "rcb_size %u\n", dec->rcb_size);
+	dev_dbg(dev, "sram_start %pa\n", &sram_start);
+	dev_dbg(dev, "rcb_iova %pad\n", &dec->rcb_iova);
+	dev_dbg(dev, "sram_size %u\n", dec->sram_size);
+	dev_dbg(dev, "rcb_size %u\n", dec->rcb_size);
 
 	ret = of_property_read_u32(dev->of_node, "rockchip,rcb-min-width", &dec->rcb_min_width);
 	if (!ret && dec->rcb_min_width)
-		dev_info(dev, "min_width %u\n", dec->rcb_min_width);
+		dev_dbg(dev, "min_width %u\n", dec->rcb_min_width);
 
 	/* if have, read rcb_info */
 	dec->rcb_info_count = device_property_count_u32(dev, "rockchip,rcb-info");
@@ -1881,10 +1877,10 @@ static int rkvdec2_alloc_rcbbuf(struct platform_device *pdev, struct rkvdec2_dev
 		ret = device_property_read_u32_array(dev, "rockchip,rcb-info",
 						     dec->rcb_infos, dec->rcb_info_count);
 		if (!ret) {
-			dev_info(dev, "rcb_info_count %u\n", dec->rcb_info_count);
+			dev_dbg(dev, "rcb_info_count %u\n", dec->rcb_info_count);
 			for (i = 0; i < dec->rcb_info_count; i += 2)
-				dev_info(dev, "[%u, %u]\n",
-					 dec->rcb_infos[i], dec->rcb_infos[i+1]);
+				dev_dbg(dev, "[%u, %u]\n",
+					dec->rcb_infos[i], dec->rcb_infos[i + 1]);
 		}
 	}
 
@@ -2064,7 +2060,8 @@ static int rkvdec2_probe(struct platform_device *pdev)
 
 	if (strstr(np->name, "ccu"))
 		ret = rkvdec2_ccu_probe(pdev);
-	else if (strstr(np->name, "core"))
+	else if (strstr(np->name, "core") ||
+		 of_property_present(np, "rockchip,ccu"))
 		ret = rkvdec2_core_probe(pdev);
 	else
 		ret = rkvdec2_probe_default(pdev);

@@ -662,7 +662,8 @@ mpp_reset_control_get(struct mpp_dev *mpp, enum MPP_RESET_TYPE type, const char 
 	index = of_property_match_string(mpp->dev->of_node,
 					 "reset-names", shared_name);
 	if (index < 0) {
-		dev_err(mpp->dev, "%s is not found!\n", shared_name);
+		if (type != RST_TYPE_NIU_A && type != RST_TYPE_NIU_H)
+			dev_err(mpp->dev, "%s is not found!\n", shared_name);
 		return NULL;
 	}
 
@@ -680,7 +681,7 @@ mpp_reset_control_get(struct mpp_dev *mpp, enum MPP_RESET_TYPE type, const char 
 		group->resets[type] = rst;
 		group->queue = mpp->queue;
 	}
-	dev_info(mpp->dev, "reset_group->rw_sem_on=%d\n", group->rw_sem_on);
+	dev_dbg(mpp->dev, "reset_group->rw_sem_on=%d\n", group->rw_sem_on);
 	up_write(&group->rw_sem);
 
 	return rst;
