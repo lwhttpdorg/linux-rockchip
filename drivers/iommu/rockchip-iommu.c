@@ -26,6 +26,7 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/string_choices.h>
+#include <soc/rockchip/rockchip_iommu.h>
 
 #include "iommu-pages.h"
 
@@ -89,6 +90,8 @@ struct rk_iommu_domain {
 	spinlock_t iommus_lock; /* lock for iommus list */
 	spinlock_t dt_lock; /* lock for modifying page directory table */
 	struct device *dma_dev;
+	struct third_iommu_ops_wrap *opt_ops;
+	struct device *iommu_dev;
 
 	struct iommu_domain domain;
 };
@@ -117,6 +120,7 @@ struct rk_iommu {
 	struct iommu_device iommu;
 	struct list_head node; /* entry in rk_iommu_domain.iommus */
 	struct iommu_domain *domain; /* domain to which iommu is attached */
+	struct third_iommu_ops_wrap *opt_ops;
 };
 
 struct rk_iommudata {
@@ -657,6 +661,10 @@ static phys_addr_t rk_iommu_iova_to_phys(struct iommu_domain *domain,
 	u32 dte, pte;
 	u32 *page_table;
 
+	if (rk_domain->opt_ops && rk_domain->opt_ops->iova_to_phys)
+		return rk_domain->opt_ops->iova_to_phys(domain, iova,
+							rk_domain->iommu_dev);
+
 	spin_lock_irqsave(&rk_domain->dt_lock, flags);
 
 	dte = rk_domain->dt[rk_iova_dte_index(iova)];
@@ -830,6 +838,14 @@ static int rk_iommu_map(struct iommu_domain *domain, unsigned long _iova,
 	u32 dte_index, pte_index;
 	int ret;
 
+	if (rk_domain->opt_ops && rk_domain->opt_ops->map) {
+		ret = rk_domain->opt_ops->map(domain, _iova, paddr, size,
+					      prot, gfp, rk_domain->iommu_dev);
+		if (!ret)
+			*mapped = size;
+		return ret;
+	}
+
 	spin_lock_irqsave(&rk_domain->dt_lock, flags);
 
 	/*
@@ -870,6 +886,10 @@ static size_t rk_iommu_unmap(struct iommu_domain *domain, unsigned long _iova,
 	u32 dte;
 	u32 *pte_addr;
 	size_t unmap_size;
+
+	if (rk_domain->opt_ops && rk_domain->opt_ops->unmap)
+		return rk_domain->opt_ops->unmap(domain, _iova, size, gather,
+						 rk_domain->iommu_dev);
 
 	spin_lock_irqsave(&rk_domain->dt_lock, flags);
 
@@ -986,6 +1006,12 @@ static int rk_iommu_identity_attach(struct iommu_domain *identity_domain,
 	list_del_init(&iommu->node);
 	spin_unlock_irqrestore(&rk_domain->iommus_lock, flags);
 
+	if (rk_domain->opt_ops && rk_domain->opt_ops->detach_dev) {
+		rk_domain->opt_ops->detach_dev(&rk_domain->domain,
+					       rk_domain->iommu_dev);
+		return 0;
+	}
+
 	ret = pm_runtime_get_if_in_use(iommu->dev);
 	WARN_ON_ONCE(ret < 0);
 	if (ret > 0) {
@@ -1020,6 +1046,20 @@ static int rk_iommu_attach_device(struct iommu_domain *domain,
 	iommu = rk_iommu_from_dev(dev);
 	if (!iommu)
 		return 0;
+
+	if (iommu->opt_ops) {
+		rk_domain->opt_ops = iommu->opt_ops;
+		rk_domain->iommu_dev = iommu->dev;
+	}
+
+	if (rk_domain->opt_ops && rk_domain->opt_ops->attach_dev) {
+		iommu->domain = domain;
+		spin_lock_irqsave(&rk_domain->iommus_lock, flags);
+		list_add_tail(&iommu->node, &rk_domain->iommus);
+		spin_unlock_irqrestore(&rk_domain->iommus_lock, flags);
+		return rk_domain->opt_ops->attach_dev(domain,
+						      rk_domain->iommu_dev);
+	}
 
 	dev_dbg(dev, "Attaching to iommu domain\n");
 
@@ -1111,6 +1151,9 @@ static void rk_iommu_domain_free(struct iommu_domain *domain)
 {
 	struct rk_iommu_domain *rk_domain = to_rk_domain(domain);
 	int i;
+
+	if (rk_domain->opt_ops && rk_domain->opt_ops->free)
+		rk_domain->opt_ops->free(domain, rk_domain->iommu_dev);
 
 	WARN_ON(!list_empty(&rk_domain->iommus));
 
@@ -1222,6 +1265,14 @@ static int rk_iommu_probe(struct platform_device *pdev)
 	if (WARN_ON(rk_ops != ops))
 		return -EINVAL;
 
+	if (device_property_match_string(dev, "compatible",
+					 "rockchip,iommu-av1d") >= 0) {
+		iommu->opt_ops = av1d_iommu_get_ops();
+		if (iommu->opt_ops)
+			dev_info(dev, "av1d iommu enabled\n");
+		goto register_iommu;
+	}
+
 	iommu->bases = devm_kcalloc(dev, num_res, sizeof(*iommu->bases),
 				    GFP_KERNEL);
 	if (!iommu->bases)
@@ -1270,6 +1321,10 @@ static int rk_iommu_probe(struct platform_device *pdev)
 	if (err)
 		return err;
 
+register_iommu:
+	if (iommu->opt_ops)
+		goto add_iommu;
+
 	pm_runtime_enable(dev);
 
 	for (i = 0; i < iommu->num_irq; i++) {
@@ -1286,6 +1341,7 @@ static int rk_iommu_probe(struct platform_device *pdev)
 			goto err_pm_disable;
 	}
 
+add_iommu:
 	dma_set_mask_and_coherent(dev, rk_ops->dma_bit_mask);
 
 	err = iommu_device_sysfs_add(&iommu->iommu, dev, NULL, dev_name(dev));
@@ -1295,6 +1351,12 @@ static int rk_iommu_probe(struct platform_device *pdev)
 	err = iommu_device_register(&iommu->iommu, &rk_iommu_ops, dev);
 	if (err)
 		goto err_remove_sysfs;
+
+	if (iommu->opt_ops && iommu->opt_ops->probe) {
+		err = iommu->opt_ops->probe(pdev);
+		if (err)
+			goto err_remove_sysfs;
+	}
 
 	return 0;
 err_remove_sysfs:
@@ -1308,7 +1370,17 @@ err_pm_disable:
 static void rk_iommu_shutdown(struct platform_device *pdev)
 {
 	struct rk_iommu *iommu = platform_get_drvdata(pdev);
+	struct rk_iommu_domain *rk_domain;
 	int i;
+
+	if (iommu->domain && iommu->domain != &rk_identity_domain) {
+		rk_domain = to_rk_domain(iommu->domain);
+		if (rk_domain->opt_ops && rk_domain->opt_ops->shutdown)
+			return rk_domain->opt_ops->shutdown(pdev);
+	}
+
+	if (iommu->opt_ops && iommu->opt_ops->shutdown)
+		return iommu->opt_ops->shutdown(pdev);
 
 	for (i = 0; i < iommu->num_irq; i++) {
 		int irq = platform_get_irq(pdev, i);
@@ -1322,9 +1394,14 @@ static void rk_iommu_shutdown(struct platform_device *pdev)
 static int __maybe_unused rk_iommu_suspend(struct device *dev)
 {
 	struct rk_iommu *iommu = dev_get_drvdata(dev);
+	struct rk_iommu_domain *rk_domain;
 
 	if (iommu->domain == &rk_identity_domain)
 		return 0;
+
+	rk_domain = to_rk_domain(iommu->domain);
+	if (rk_domain->opt_ops && rk_domain->opt_ops->suspend)
+		return rk_domain->opt_ops->suspend(dev);
 
 	rk_iommu_disable(iommu);
 	return 0;
@@ -1333,9 +1410,14 @@ static int __maybe_unused rk_iommu_suspend(struct device *dev)
 static int __maybe_unused rk_iommu_resume(struct device *dev)
 {
 	struct rk_iommu *iommu = dev_get_drvdata(dev);
+	struct rk_iommu_domain *rk_domain;
 
 	if (iommu->domain == &rk_identity_domain)
 		return 0;
+
+	rk_domain = to_rk_domain(iommu->domain);
+	if (rk_domain->opt_ops && rk_domain->opt_ops->resume)
+		return rk_domain->opt_ops->resume(dev);
 
 	return rk_iommu_enable(iommu);
 }
@@ -1367,6 +1449,9 @@ static const struct of_device_id rk_iommu_dt_ids[] = {
 		.data = &iommu_data_ops_v1,
 	},
 	{	.compatible = "rockchip,rk3568-iommu",
+		.data = &iommu_data_ops_v2,
+	},
+	{	.compatible = "rockchip,iommu-av1d",
 		.data = &iommu_data_ops_v2,
 	},
 	{ /* sentinel */ }

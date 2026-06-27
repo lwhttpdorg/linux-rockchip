@@ -19,8 +19,265 @@
 	compatible = "friendlyarm,nanopc-t6", "rockchip,rk3588";
 
 	aliases {
+		jpege0 = &vepu121_0;
+		jpege1 = &vepu121_1;
+		jpege2 = &vepu121_2;
+		jpege3 = &vepu121_3;
 		mmc0 = &sdhci;
 		mmc1 = &sdmmc;
+		vdpu0 = &vdpu;
+		vepu0 = &vpu121;
+	};
+
+	mpp_srv: mpp-srv {
+		compatible = "rockchip,mpp-service";
+		rockchip,taskqueue-count = <12>;
+		rockchip,resetgroup-count = <1>;
+		status = "okay";
+	};
+
+	jpege_ccu: jpege-ccu {
+		compatible = "rockchip,vpu-jpege-ccu";
+		status = "okay";
+	};
+
+	vdpu: vdpu@fdb50400 {
+		compatible = "rockchip,vpu-decoder-v2";
+		reg = <0x0 0xfdb50400 0x0 0x400>;
+		interrupts = <GIC_SPI 119 IRQ_TYPE_LEVEL_HIGH 0>;
+		interrupt-names = "irq_vdpu";
+		clocks = <&cru ACLK_VPU>, <&cru HCLK_VPU>;
+		clock-names = "aclk_vcodec", "hclk_vcodec";
+		rockchip,normal-rates = <594000000>, <0>;
+		assigned-clocks = <&cru ACLK_VPU>;
+		assigned-clock-rates = <594000000>;
+		resets = <&cru SRST_A_VPU>, <&cru SRST_H_VPU>;
+		reset-names = "shared_video_a", "shared_video_h";
+		rockchip,skip-pmu-idle-request;
+		rockchip,disable-auto-freq;
+		iommus = <&vpu121_mmu>;
+		rockchip,srv = <&mpp_srv>;
+		rockchip,taskqueue-node = <0>;
+		rockchip,resetgroup-node = <0>;
+		power-domains = <&power RK3588_PD_VDPU>;
+		status = "okay";
+	};
+
+	jpegd: jpegd@fdb90000 {
+		compatible = "rockchip,rkv-jpeg-decoder-v1";
+		reg = <0x0 0xfdb90000 0x0 0x400>;
+		interrupts = <GIC_SPI 129 IRQ_TYPE_LEVEL_HIGH 0>;
+		interrupt-names = "irq_jpegd";
+		clocks = <&cru ACLK_JPEG_DECODER>, <&cru HCLK_JPEG_DECODER>;
+		clock-names = "aclk_vcodec", "hclk_vcodec";
+		rockchip,normal-rates = <600000000>, <0>;
+		assigned-clocks = <&cru ACLK_JPEG_DECODER>;
+		assigned-clock-rates = <600000000>;
+		resets = <&cru SRST_A_JPEG_DECODER>, <&cru SRST_H_JPEG_DECODER>;
+		reset-names = "video_a", "video_h";
+		rockchip,skip-pmu-idle-request;
+		iommus = <&jpegd_mmu>;
+		rockchip,srv = <&mpp_srv>;
+		rockchip,taskqueue-node = <1>;
+		power-domains = <&power RK3588_PD_VDPU>;
+		status = "okay";
+	};
+
+	jpegd_mmu: iommu@fdb90480 {
+		compatible = "rockchip,rk3588-iommu", "rockchip,rk3568-iommu";
+		reg = <0x0 0xfdb90480 0x0 0x40>;
+		interrupts = <GIC_SPI 130 IRQ_TYPE_LEVEL_HIGH 0>;
+		interrupt-names = "irq_jpegd_mmu";
+		clocks = <&cru ACLK_JPEG_DECODER>, <&cru HCLK_JPEG_DECODER>;
+		clock-names = "aclk", "iface";
+		power-domains = <&power RK3588_PD_VDPU>;
+		#iommu-cells = <0>;
+		status = "okay";
+	};
+
+	rkvdec_ccu: rkvdec-ccu@fdc30000 {
+		compatible = "rockchip,rkv-decoder-v2-ccu";
+		reg = <0x0 0xfdc30000 0x0 0x100>;
+		reg-names = "ccu";
+		clocks = <&cru ACLK_RKVDEC_CCU>;
+		clock-names = "aclk_ccu";
+		assigned-clocks = <&cru ACLK_RKVDEC_CCU>;
+		assigned-clock-rates = <600000000>;
+		resets = <&cru SRST_A_RKVDEC_CCU>;
+		reset-names = "video_ccu";
+		power-domains = <&power RK3588_PD_RKVDEC0>;
+		rockchip,skip-pmu-idle-request;
+		rockchip,ccu-mode = <1>;
+		status = "okay";
+	};
+
+	rkvenc_ccu: rkvenc-ccu {
+		compatible = "rockchip,rkv-encoder-v2-ccu";
+		status = "okay";
+	};
+
+	rkvenc0: rkvenc-core@fdbd0000 {
+		compatible = "rockchip,rkv-encoder-v2-core";
+		reg = <0x0 0xfdbd0000 0x0 0x6000>;
+		interrupts = <GIC_SPI 101 IRQ_TYPE_LEVEL_HIGH 0>;
+		interrupt-names = "irq_rkvenc0";
+		clocks = <&cru ACLK_RKVENC0>, <&cru HCLK_RKVENC0>,
+			 <&cru CLK_RKVENC0_CORE>;
+		clock-names = "aclk_vcodec", "hclk_vcodec", "clk_core";
+		rockchip,normal-rates = <500000000>, <0>, <800000000>;
+		assigned-clocks = <&cru ACLK_RKVENC0>, <&cru CLK_RKVENC0_CORE>;
+		assigned-clock-rates = <500000000>, <800000000>;
+		resets = <&cru SRST_A_RKVENC0>, <&cru SRST_H_RKVENC0>,
+			 <&cru SRST_RKVENC0_CORE>;
+		reset-names = "video_a", "video_h", "video_core";
+		rockchip,skip-pmu-idle-request;
+		iommus = <&rkvenc0_mmu>;
+		rockchip,srv = <&mpp_srv>;
+		rockchip,ccu = <&rkvenc_ccu>;
+		rockchip,taskqueue-node = <7>;
+		rockchip,task-capacity = <8>;
+		power-domains = <&power RK3588_PD_VENC0>;
+		operating-points-v2 = <&venc_opp_table>;
+		status = "okay";
+	};
+
+	rkvenc0_mmu: iommu@fdbdf000 {
+		compatible = "rockchip,rk3588-iommu", "rockchip,rk3568-iommu";
+		reg = <0x0 0xfdbdf000 0x0 0x40>,
+		      <0x0 0xfdbdf040 0x0 0x40>;
+		interrupts = <GIC_SPI 99 IRQ_TYPE_LEVEL_HIGH 0>,
+			     <GIC_SPI 100 IRQ_TYPE_LEVEL_HIGH 0>;
+		interrupt-names = "irq_rkvenc0_mmu0", "irq_rkvenc0_mmu1";
+		clocks = <&cru ACLK_RKVENC0>, <&cru HCLK_RKVENC0>;
+		clock-names = "aclk", "iface";
+		rockchip,disable-mmu-reset;
+		rockchip,enable-cmd-retry;
+		rockchip,shootdown-entire;
+		#iommu-cells = <0>;
+		power-domains = <&power RK3588_PD_VENC0>;
+		status = "okay";
+	};
+
+	rkvenc1: rkvenc-core@fdbe0000 {
+		compatible = "rockchip,rkv-encoder-v2-core";
+		reg = <0x0 0xfdbe0000 0x0 0x6000>;
+		interrupts = <GIC_SPI 104 IRQ_TYPE_LEVEL_HIGH 0>;
+		interrupt-names = "irq_rkvenc1";
+		clocks = <&cru ACLK_RKVENC1>, <&cru HCLK_RKVENC1>,
+			 <&cru CLK_RKVENC1_CORE>;
+		clock-names = "aclk_vcodec", "hclk_vcodec", "clk_core";
+		rockchip,normal-rates = <500000000>, <0>, <800000000>;
+		assigned-clocks = <&cru ACLK_RKVENC1>, <&cru CLK_RKVENC1_CORE>;
+		assigned-clock-rates = <500000000>, <800000000>;
+		resets = <&cru SRST_A_RKVENC1>, <&cru SRST_H_RKVENC1>,
+			 <&cru SRST_RKVENC1_CORE>;
+		reset-names = "video_a", "video_h", "video_core";
+		rockchip,skip-pmu-idle-request;
+		iommus = <&rkvenc1_mmu>;
+		rockchip,srv = <&mpp_srv>;
+		rockchip,ccu = <&rkvenc_ccu>;
+		rockchip,taskqueue-node = <7>;
+		rockchip,task-capacity = <8>;
+		power-domains = <&power RK3588_PD_VENC1>;
+		operating-points-v2 = <&venc_opp_table>;
+		status = "okay";
+	};
+
+	rkvenc1_mmu: iommu@fdbef000 {
+		compatible = "rockchip,rk3588-iommu", "rockchip,rk3568-iommu";
+		reg = <0x0 0xfdbef000 0x0 0x40>,
+		      <0x0 0xfdbef040 0x0 0x40>;
+		interrupts = <GIC_SPI 102 IRQ_TYPE_LEVEL_HIGH 0>,
+			     <GIC_SPI 103 IRQ_TYPE_LEVEL_HIGH 0>;
+		interrupt-names = "irq_rkvenc1_mmu0", "irq_rkvenc1_mmu1";
+		clocks = <&cru ACLK_RKVENC1>, <&cru HCLK_RKVENC1>;
+		clock-names = "aclk", "iface";
+		rockchip,disable-mmu-reset;
+		rockchip,enable-cmd-retry;
+		rockchip,shootdown-entire;
+		#iommu-cells = <0>;
+		power-domains = <&power RK3588_PD_VENC1>;
+		status = "okay";
+	};
+
+	venc_opp_table: venc-opp-table {
+		compatible = "operating-points-v2";
+
+		opp-800000000 {
+			opp-hz = /bits/ 64 <800000000>;
+			opp-microvolt = <750000 750000 850000>,
+					<750000 750000 850000>;
+		};
+	};
+
+	rkvdec1: rkvdec-core@fdc48000 {
+		compatible = "rockchip,rkv-decoder-v2";
+		reg = <0x0 0xfdc48100 0x0 0x400>,
+		      <0x0 0xfdc48000 0x0 0x100>;
+		reg-names = "regs", "link";
+		interrupts = <GIC_SPI 97 IRQ_TYPE_LEVEL_HIGH 0>;
+		interrupt-names = "irq_rkvdec1";
+		clocks = <&cru ACLK_RKVDEC1>, <&cru HCLK_RKVDEC1>,
+			 <&cru CLK_RKVDEC1_CORE>, <&cru CLK_RKVDEC1_CA>,
+			 <&cru CLK_RKVDEC1_HEVC_CA>;
+		clock-names = "aclk_vcodec", "hclk_vcodec", "clk_core",
+			      "clk_cabac", "clk_hevc_cabac";
+		rockchip,normal-rates = <800000000>, <0>, <600000000>,
+					<600000000>, <1000000000>;
+		assigned-clocks = <&cru ACLK_RKVDEC1>, <&cru CLK_RKVDEC1_CORE>,
+				  <&cru CLK_RKVDEC1_CA>, <&cru CLK_RKVDEC1_HEVC_CA>;
+		assigned-clock-rates = <800000000>, <600000000>,
+				       <600000000>, <1000000000>;
+		resets = <&cru SRST_A_RKVDEC1>, <&cru SRST_H_RKVDEC1>,
+			 <&cru SRST_RKVDEC1_CORE>, <&cru SRST_RKVDEC1_CA>,
+			 <&cru SRST_RKVDEC1_HEVC_CA>;
+		reset-names = "video_a", "video_h", "video_core",
+			      "video_cabac", "video_hevc_cabac";
+		rockchip,skip-pmu-idle-request;
+		iommus = <&rkvdec1_mmu>;
+		rockchip,srv = <&mpp_srv>;
+		rockchip,ccu = <&rkvdec_ccu>;
+		rockchip,core-mask = <0x00020002>;
+		rockchip,task-capacity = <16>;
+		rockchip,taskqueue-node = <9>;
+		rockchip,sram = <&vdec1_sram>;
+		rockchip,rcb-iova = <0xFFE00000 0x100000>;
+		rockchip,rcb-info = <136 24576>, <137 49152>, <141 90112>,
+				    <140 49152>, <139 180224>, <133 49152>,
+				    <134 8192>, <135 4352>, <138 13056>,
+				    <142 291584>;
+		rockchip,rcb-min-width = <512>;
+		power-domains = <&power RK3588_PD_RKVDEC1>;
+		status = "okay";
+	};
+
+	rkvdec1_mmu: iommu@fdc48700 {
+		compatible = "rockchip,rk3588-iommu", "rockchip,rk3568-iommu";
+		reg = <0x0 0xfdc48700 0x0 0x40>,
+		      <0x0 0xfdc48740 0x0 0x40>;
+		interrupts = <GIC_SPI 98 IRQ_TYPE_LEVEL_HIGH 0>;
+		interrupt-names = "irq_rkvdec1_mmu";
+		clocks = <&cru ACLK_RKVDEC1>, <&cru HCLK_RKVDEC1>;
+		clock-names = "aclk", "iface";
+		rockchip,disable-mmu-reset;
+		rockchip,enable-cmd-retry;
+		rockchip,shootdown-entire;
+		rockchip,master-handle-irq;
+		#iommu-cells = <0>;
+		power-domains = <&power RK3588_PD_RKVDEC1>;
+		status = "okay";
+	};
+
+	av1d_mmu: iommu@fdca0000 {
+		compatible = "rockchip,iommu-av1d";
+		reg = <0x0 0xfdca0000 0x0 0x600>;
+		interrupts = <GIC_SPI 109 IRQ_TYPE_LEVEL_HIGH 0>;
+		interrupt-names = "irq_av1d_mmu";
+		clocks = <&cru ACLK_AV1>, <&cru PCLK_AV1>;
+		clock-names = "aclk", "iface";
+		#iommu-cells = <0>;
+		power-domains = <&power RK3588_PD_AV1>;
+		status = "okay";
 	};
 
 	adc-keys-0 {
@@ -635,6 +892,8 @@
 	status = "okay";
 };
 
+/delete-node/ &pcie3x4_ep;
+
 &pcie3x4 {
 	reset-gpios = <&gpio4 RK_PB6 GPIO_ACTIVE_HIGH>;
 	vpcie3v3-supply = <&vcc3v3_pcie30>;
@@ -1229,6 +1488,187 @@
 
 &usb_host1_ohci {
 	status = "okay";
+};
+
+&vepu121_0 {
+	compatible = "rockchip,vpu-jpege-core";
+	reg = <0x0 0xfdba0000 0x0 0x400>;
+	interrupt-names = "irq_jpege0";
+	clock-names = "aclk_vcodec", "hclk_vcodec";
+	rockchip,normal-rates = <594000000>, <0>;
+	assigned-clocks = <&cru ACLK_JPEG_ENCODER0>;
+	assigned-clock-rates = <594000000>;
+	resets = <&cru SRST_A_JPEG_ENCODER0>, <&cru SRST_H_JPEG_ENCODER0>;
+	reset-names = "video_a", "video_h";
+	rockchip,skip-pmu-idle-request;
+	rockchip,disable-auto-freq;
+	rockchip,srv = <&mpp_srv>;
+	rockchip,taskqueue-node = <2>;
+	rockchip,ccu = <&jpege_ccu>;
+	status = "okay";
+};
+
+&vepu121_0_mmu {
+	interrupt-names = "irq_jpege0_mmu";
+	status = "okay";
+};
+
+&vepu121_1 {
+	compatible = "rockchip,vpu-jpege-core";
+	reg = <0x0 0xfdba4000 0x0 0x400>;
+	interrupt-names = "irq_jpege1";
+	clock-names = "aclk_vcodec", "hclk_vcodec";
+	rockchip,normal-rates = <594000000>, <0>;
+	assigned-clocks = <&cru ACLK_JPEG_ENCODER1>;
+	assigned-clock-rates = <594000000>;
+	resets = <&cru SRST_A_JPEG_ENCODER1>, <&cru SRST_H_JPEG_ENCODER1>;
+	reset-names = "video_a", "video_h";
+	rockchip,skip-pmu-idle-request;
+	rockchip,disable-auto-freq;
+	rockchip,srv = <&mpp_srv>;
+	rockchip,taskqueue-node = <2>;
+	rockchip,ccu = <&jpege_ccu>;
+	status = "okay";
+};
+
+&vepu121_1_mmu {
+	interrupt-names = "irq_jpege1_mmu";
+	status = "okay";
+};
+
+&vepu121_2 {
+	compatible = "rockchip,vpu-jpege-core";
+	reg = <0x0 0xfdba8000 0x0 0x400>;
+	interrupt-names = "irq_jpege2";
+	clock-names = "aclk_vcodec", "hclk_vcodec";
+	rockchip,normal-rates = <594000000>, <0>;
+	assigned-clocks = <&cru ACLK_JPEG_ENCODER2>;
+	assigned-clock-rates = <594000000>;
+	resets = <&cru SRST_A_JPEG_ENCODER2>, <&cru SRST_H_JPEG_ENCODER2>;
+	reset-names = "video_a", "video_h";
+	rockchip,skip-pmu-idle-request;
+	rockchip,disable-auto-freq;
+	rockchip,srv = <&mpp_srv>;
+	rockchip,taskqueue-node = <2>;
+	rockchip,ccu = <&jpege_ccu>;
+	status = "okay";
+};
+
+&vepu121_2_mmu {
+	interrupt-names = "irq_jpege2_mmu";
+	status = "okay";
+};
+
+&vepu121_3 {
+	compatible = "rockchip,vpu-jpege-core";
+	reg = <0x0 0xfdbac000 0x0 0x400>;
+	interrupt-names = "irq_jpege3";
+	clock-names = "aclk_vcodec", "hclk_vcodec";
+	rockchip,normal-rates = <594000000>, <0>;
+	assigned-clocks = <&cru ACLK_JPEG_ENCODER3>;
+	assigned-clock-rates = <594000000>;
+	resets = <&cru SRST_A_JPEG_ENCODER3>, <&cru SRST_H_JPEG_ENCODER3>;
+	reset-names = "video_a", "video_h";
+	rockchip,skip-pmu-idle-request;
+	rockchip,disable-auto-freq;
+	rockchip,srv = <&mpp_srv>;
+	rockchip,taskqueue-node = <2>;
+	rockchip,ccu = <&jpege_ccu>;
+	status = "okay";
+};
+
+&vepu121_3_mmu {
+	interrupt-names = "irq_jpege3_mmu";
+	status = "okay";
+};
+
+&vpu121 {
+	compatible = "rockchip,vpu-encoder-v2";
+	reg = <0x0 0xfdb50000 0x0 0x400>;
+	interrupts = <GIC_SPI 120 IRQ_TYPE_LEVEL_HIGH 0>;
+	interrupt-names = "irq_vepu";
+	clock-names = "aclk_vcodec", "hclk_vcodec";
+	rockchip,normal-rates = <594000000>, <0>;
+	assigned-clocks = <&cru ACLK_VPU>;
+	assigned-clock-rates = <594000000>;
+	resets = <&cru SRST_A_VPU>, <&cru SRST_H_VPU>;
+	reset-names = "shared_video_a", "shared_video_h";
+	rockchip,skip-pmu-idle-request;
+	rockchip,disable-auto-freq;
+	iommus = <&vpu121_mmu>;
+	rockchip,srv = <&mpp_srv>;
+	rockchip,taskqueue-node = <0>;
+	rockchip,resetgroup-node = <0>;
+	status = "okay";
+};
+
+&vpu121_mmu {
+	interrupt-names = "irq_vdpu_mmu";
+	status = "okay";
+};
+
+&av1d {
+	compatible = "rockchip,av1-decoder";
+	reg = <0x0 0xfdc70000 0x0 0x800>,
+	      <0x0 0xfdc80000 0x0 0x400>,
+	      <0x0 0xfdc90000 0x0 0x400>;
+	reg-names = "vcd", "cache", "afbc";
+	interrupts = <GIC_SPI 108 IRQ_TYPE_LEVEL_HIGH 0>,
+		     <GIC_SPI 107 IRQ_TYPE_LEVEL_HIGH 0>,
+		     <GIC_SPI 106 IRQ_TYPE_LEVEL_HIGH 0>;
+	interrupt-names = "irq_av1d", "irq_cache", "irq_afbc";
+	clock-names = "aclk_vcodec", "hclk_vcodec";
+	rockchip,normal-rates = <400000000>, <400000000>;
+	resets = <&cru SRST_A_AV1>, <&cru SRST_P_AV1>;
+	reset-names = "video_a", "video_h";
+	iommus = <&av1d_mmu>;
+	rockchip,srv = <&mpp_srv>;
+	rockchip,taskqueue-node = <11>;
+	status = "okay";
+};
+
+&vdec0 {
+	compatible = "rockchip,rkv-decoder-v2";
+	reg = <0x0 0xfdc38100 0x0 0x400>,
+	      <0x0 0xfdc38000 0x0 0x100>;
+	reg-names = "regs", "link";
+	interrupt-names = "irq_rkvdec0";
+	clock-names = "aclk_vcodec", "hclk_vcodec", "clk_core", "clk_cabac",
+		      "clk_hevc_cabac";
+	rockchip,normal-rates = <800000000>, <0>, <600000000>, <600000000>,
+				<1000000000>;
+	reset-names = "video_a", "video_h", "video_core", "video_cabac",
+		      "video_hevc_cabac";
+	rockchip,skip-pmu-idle-request;
+	rockchip,srv = <&mpp_srv>;
+	rockchip,ccu = <&rkvdec_ccu>;
+	rockchip,core-mask = <0x00010001>;
+	rockchip,task-capacity = <16>;
+	rockchip,taskqueue-node = <9>;
+	rockchip,sram = <&vdec0_sram>;
+	rockchip,rcb-iova = <0xFFF00000 0x100000>;
+	rockchip,rcb-info = <136 24576>, <137 49152>, <141 90112>, <140 49152>,
+			    <139 180224>, <133 49152>, <134 8192>, <135 4352>,
+			    <138 13056>, <142 291584>;
+	rockchip,rcb-min-width = <512>;
+	status = "okay";
+};
+
+&vdec0_mmu {
+	interrupt-names = "irq_rkvdec0_mmu";
+	rockchip,disable-mmu-reset;
+	rockchip,enable-cmd-retry;
+	rockchip,shootdown-entire;
+	rockchip,master-handle-irq;
+	status = "okay";
+};
+
+&vdec1 {
+	status = "disabled";
+};
+
+&vdec1_mmu {
+	status = "disabled";
 };
 
 &vop_mmu {
