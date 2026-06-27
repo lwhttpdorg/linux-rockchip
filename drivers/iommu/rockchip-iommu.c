@@ -1348,15 +1348,15 @@ add_iommu:
 	if (err)
 		goto err_pm_disable;
 
-	err = iommu_device_register(&iommu->iommu, &rk_iommu_ops, dev);
-	if (err)
-		goto err_remove_sysfs;
-
 	if (iommu->opt_ops && iommu->opt_ops->probe) {
 		err = iommu->opt_ops->probe(pdev);
 		if (err)
 			goto err_remove_sysfs;
 	}
+
+	err = iommu_device_register(&iommu->iommu, &rk_iommu_ops, dev);
+	if (err)
+		goto err_remove_sysfs;
 
 	return 0;
 err_remove_sysfs:
