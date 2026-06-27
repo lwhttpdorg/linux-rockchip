@@ -688,7 +688,7 @@ static int vepu_procfs_init(struct mpp_dev *mpp)
 			mpp->dev->of_node->name, mpp->core_id);
 	else
 		snprintf(name, sizeof(name) - 1, "%s",
-			mpp->dev->of_node->name);
+			dev_name(mpp->dev));
 
 	enc->procfs = proc_mkdir(name, mpp->srv->procfs);
 	if (IS_ERR_OR_NULL(enc->procfs)) {
