@@ -476,7 +476,18 @@ static int mpp_iommu_handle(struct iommu_domain *iommu,
 			    unsigned long iova,
 			    int status, void *arg)
 {
-	struct mpp_dev *mpp = (struct mpp_dev *)arg;
+	struct mpp_iommu_info *info = arg;
+	struct mpp_dev *mpp = NULL;
+	unsigned long flags;
+
+	if (info) {
+		spin_lock_irqsave(&info->dev_lock, flags);
+		mpp = info->dev_active;
+		spin_unlock_irqrestore(&info->dev_lock, flags);
+	}
+
+	if (mpp && mpp->fault_handler && mpp->fault_handler != mpp_iommu_handle)
+		return mpp->fault_handler(iommu, iommu_dev, iova, status, mpp);
 
 	/*
 	 * Mask iommu irq, in order for iommu not repeatedly trigger pagefault.
@@ -651,9 +662,10 @@ int mpp_iommu_dev_activate(struct mpp_iommu_info *info, struct mpp_dev *dev)
 		ret = -EINVAL;
 	} else {
 		info->dev_active = dev;
-		/* switch domain pagefault handler and arg depending on device */
-		iommu_set_fault_handler(info->domain, dev->fault_handler ?
-					dev->fault_handler : mpp_iommu_handle, dev);
+		if (!info->hdl) {
+			iommu_set_fault_handler(info->domain, mpp_iommu_handle, info);
+			info->hdl = mpp_iommu_handle;
+		}
 
 		dev_dbg(info->dev, "activate -> %p %s\n", dev, dev_name(dev->dev));
 	}
