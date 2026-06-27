@@ -262,15 +262,15 @@
 };
 
 &vepu121_1 {
-	status = "disabled";
+	status = "okay";
 };
 
 &vepu121_2 {
-	status = "disabled";
+	status = "okay";
 };
 
 &vepu121_3 {
-	status = "disabled";
+	status = "okay";
 };
 
 &combphy1_ps {
