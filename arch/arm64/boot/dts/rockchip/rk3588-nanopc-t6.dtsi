@@ -1893,10 +1893,16 @@
 	      <0x0 0xfdc38000 0x0 0x100>;
 	reg-names = "regs", "link";
 	interrupt-names = "irq_rkvdec0";
+	clocks = <&cru ACLK_RKVDEC0>, <&cru HCLK_RKVDEC0>,
+		 <&cru CLK_RKVDEC0_CORE>, <&cru CLK_RKVDEC0_CA>,
+		 <&cru CLK_RKVDEC0_HEVC_CA>;
 	clock-names = "aclk_vcodec", "hclk_vcodec", "clk_core", "clk_cabac",
 		      "clk_hevc_cabac";
 	rockchip,normal-rates = <800000000>, <0>, <600000000>, <600000000>,
 				<1000000000>;
+	resets = <&cru SRST_A_RKVDEC0>, <&cru SRST_H_RKVDEC0>,
+		 <&cru SRST_RKVDEC0_CORE>, <&cru SRST_RKVDEC0_CA>,
+		 <&cru SRST_RKVDEC0_HEVC_CA>;
 	reset-names = "video_a", "video_h", "video_core", "video_cabac",
 		      "video_hevc_cabac";
 	rockchip,skip-pmu-idle-request;
