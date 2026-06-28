@@ -382,6 +382,7 @@
 		reg-names = "dbi", "apb", "config";
 		resets = <&cru SRST_PCIE0_POWER_UP>, <&cru SRST_P_PCIE0>;
 		reset-names = "pwr", "pipe";
+		post-init-providers = <&pcie3x4_intc>;
 		status = "disabled";
 
 		pcie3x4_intc: legacy-interrupt-controller {
@@ -521,6 +522,7 @@
 		reset-names = "pwr", "pipe";
 		#address-cells = <3>;
 		#size-cells = <2>;
+		post-init-providers = <&pcie2x1l0_intc>;
 		status = "disabled";
 
 		pcie2x1l0_intc: legacy-interrupt-controller {

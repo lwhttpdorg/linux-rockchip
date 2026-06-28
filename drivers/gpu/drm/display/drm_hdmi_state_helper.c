@@ -1174,7 +1174,9 @@ drm_atomic_helper_connector_hdmi_update(struct drm_connector *connector,
 
 	if (status == connector_status_connected) {
 		// TODO: also handle scramber, HDMI sink is now connected.
-		drm_connector_hdmi_audio_plugged_notify(connector, true);
+		/* Only notify audio plugged when sink supports audio (from EDID) */
+		drm_connector_hdmi_audio_plugged_notify(connector,
+							connector->display_info.has_audio);
 		drm_connector_cec_phys_addr_set(connector);
 	}
 }

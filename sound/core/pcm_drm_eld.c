@@ -334,7 +334,12 @@ int snd_parse_eld(struct device *dev, struct snd_parsed_hdmi_eld *e,
 	e->eld_ver = GRAB_BITS(buf, 0, 3, 5);
 	if (e->eld_ver != ELD_VER_CEA_861D &&
 	    e->eld_ver != ELD_VER_PARTIAL) {
-		dev_info_ratelimited(dev, "HDMI: Unknown ELD version %d\n", e->eld_ver);
+		/* Version 0 is common during boot when display is not ready yet */
+		if (e->eld_ver == 0)
+			dev_dbg(dev, "HDMI: ELD not ready (version 0)\n");
+		else
+			dev_info_ratelimited(dev, "HDMI: Unknown ELD version %d\n",
+					     e->eld_ver);
 		goto out_fail;
 	}
 

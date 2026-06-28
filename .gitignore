@@ -186,5 +186,8 @@ sphinx_*/
 # Rust analyzer configuration
 /rust-project.json
 
+# linux-firmware
+linux-firmware/
+
 # bc language scripts (not LLVM bitcode)
 !kernel/time/timeconst.bc

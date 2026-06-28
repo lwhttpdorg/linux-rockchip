@@ -94,6 +94,7 @@ static const struct dw_hdmi_audio_tmds_n {
 	{ .tmds = 148500000, .n_32k = 4096,  .n_44k1 = 6272,  .n_48k = 6144, },
 	{ .tmds = 154000000, .n_32k = 4096,  .n_44k1 = 5544,  .n_48k = 6144, },
 	{ .tmds = 162000000, .n_32k = 4096,  .n_44k1 = 5684,  .n_48k = 6144, },
+	{ .tmds = 241500000, .n_32k = 4096,  .n_44k1 = 4704,  .n_48k = 6144, },
 
 	/* For 297 MHz+ HDMI spec have some other rule for setting N */
 	{ .tmds = 297000000, .n_32k = 3073,  .n_44k1 = 4704,  .n_48k = 5120, },
@@ -119,6 +120,7 @@ static const struct dw_hdmi_audio_tmds_cts {
 	{ .tmds = 54000000,  .cts_32k = 54000,  .cts_44k1 = 60000,  .cts_48k = 54000,  },
 	{ .tmds = 74250000,  .cts_32k = 74250,  .cts_44k1 = 82500,  .cts_48k = 74250,  },
 	{ .tmds = 148500000, .cts_32k = 148500, .cts_44k1 = 165000, .cts_48k = 148500, },
+	{ .tmds = 241500000, .cts_32k = 241500, .cts_44k1 = 201196, .cts_48k = 241500, },
 
 	/* End of table */
 	{ .tmds = 0,         .cts_32k = 0,      .cts_44k1 = 0,      .cts_48k = 0,      },

@@ -594,6 +594,10 @@ static int drm_bridge_connector_audio_startup(struct drm_connector *connector)
 	struct drm_bridge *bridge;
 
 	if (bridge_connector->bridge_hdmi_audio) {
+		/* Don't startup if sink doesn't support audio (from EDID) */
+		if (!connector->display_info.has_audio)
+			return 0;
+
 		bridge = bridge_connector->bridge_hdmi_audio;
 
 		if (!bridge->funcs->hdmi_audio_startup)
@@ -603,6 +607,10 @@ static int drm_bridge_connector_audio_startup(struct drm_connector *connector)
 	}
 
 	if (bridge_connector->bridge_dp_audio) {
+		/* Don't startup if sink doesn't support audio (from EDID) */
+		if (!connector->display_info.has_audio)
+			return 0;
+
 		bridge = bridge_connector->bridge_dp_audio;
 
 		if (!bridge->funcs->dp_audio_startup)
@@ -623,12 +631,20 @@ static int drm_bridge_connector_audio_prepare(struct drm_connector *connector,
 	struct drm_bridge *bridge;
 
 	if (bridge_connector->bridge_hdmi_audio) {
+		/* Don't prepare if sink doesn't support audio (from EDID) */
+		if (!connector->display_info.has_audio)
+			return 0;
+
 		bridge = bridge_connector->bridge_hdmi_audio;
 
 		return bridge->funcs->hdmi_audio_prepare(bridge, connector, fmt, hparms);
 	}
 
 	if (bridge_connector->bridge_dp_audio) {
+		/* Don't prepare if sink doesn't support audio (from EDID) */
+		if (!connector->display_info.has_audio)
+			return 0;
+
 		bridge = bridge_connector->bridge_dp_audio;
 
 		return bridge->funcs->dp_audio_prepare(bridge, connector, fmt, hparms);

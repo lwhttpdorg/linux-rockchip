@@ -2028,6 +2028,7 @@
 		reset-names = "pwr", "pipe";
 		#address-cells = <3>;
 		#size-cells = <2>;
+		post-init-providers = <&pcie2x1l1_intc>;
 		status = "disabled";
 
 		pcie2x1l1_intc: legacy-interrupt-controller {
@@ -2080,6 +2081,7 @@
 		reset-names = "pwr", "pipe";
 		#address-cells = <3>;
 		#size-cells = <2>;
+		post-init-providers = <&pcie2x1l2_intc>;
 		status = "disabled";
 
 		pcie2x1l2_intc: legacy-interrupt-controller {

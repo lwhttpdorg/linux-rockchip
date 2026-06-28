@@ -10,6 +10,7 @@
 
 	aliases {
 		ethernet0 = &gmac1;
+		/* SD card */
 		mmc0 = &sdmmc0;
 	};
 };
