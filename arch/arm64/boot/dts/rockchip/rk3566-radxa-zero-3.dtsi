@@ -474,7 +474,7 @@
 		VDDL-supply = <&vdd1v2_dvp>;
 
 		/* Pin 17 on 22-pin CSI connector (CAMERAB_PDN_L) */
-		powerdown-gpios = <&gpio4 RK_PB3 GPIO_ACTIVE_LOW>;
+		reset-gpios = <&gpio4 RK_PB3 GPIO_ACTIVE_HIGH>;
 
 		port {
 			imx219_out: endpoint {
