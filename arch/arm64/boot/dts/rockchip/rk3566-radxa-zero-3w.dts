@@ -103,13 +103,15 @@
 	cap-sd-highspeed;
 	cap-sdio-irq;
 	keep-power-in-suspend;
+	max-frequency = <100000000>;
 	mmc-pwrseq = <&sdio_pwrseq>;
 	no-mmc;
 	no-sd;
 	non-removable;
 	pinctrl-names = "default";
 	pinctrl-0 = <&sdmmc1_bus4 &sdmmc1_clk &sdmmc1_cmd>;
-	sd-uhs-sdr104;
+	rockchip,default-sample-phase = <190>;
+	sd-uhs-sdr50;
 	vmmc-supply = <&vcc_3v3>;
 	vqmmc-supply = <&vcc_1v8>;
 	status = "okay";
