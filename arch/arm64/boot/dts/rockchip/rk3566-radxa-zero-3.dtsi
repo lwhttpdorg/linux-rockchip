@@ -463,7 +463,7 @@
 		compatible = "sony,imx219";
 		reg = <0x10>;
 		pinctrl-names = "default";
-		pinctrl-0 = <&camerab_pdn_l>;
+		pinctrl-0 = <&camerab_pdn_l &cif_clk>;
 
 		clocks = <&cru CLK_CIF_OUT>;
 		assigned-clocks = <&cru CLK_CIF_OUT>;
@@ -474,7 +474,7 @@
 		VDDL-supply = <&vdd1v2_dvp>;
 
 		/* Pin 17 on 22-pin CSI connector (CAMERAB_PDN_L) */
-		reset-gpios = <&gpio4 RK_PB3 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpio3 RK_PC6 GPIO_ACTIVE_HIGH>;
 
 		port {
 			imx219_out: endpoint {
@@ -590,7 +590,7 @@
 	camerab {
 		/* Pin 17 on 22-pin MIPI CSI connector */
 		camerab_pdn_l: camerab-pdn-l {
-			rockchip,pins = <4 RK_PB3 RK_FUNC_GPIO &pcfg_pull_none>;
+			rockchip,pins = <3 RK_PC6 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 	};
 
