@@ -448,6 +448,22 @@
 	status = "okay";
 };
 
+&vpu {
+	status = "okay";
+};
+
+&vdpu_mmu {
+	status = "okay";
+};
+
+&vepu {
+	status = "okay";
+};
+
+&vepu_mmu {
+	status = "okay";
+};
+
 /* MIPI CSI: PHY + I2C2 for camera (pins 20/21 on CSI connector) */
 &csi_dphy {
 	status = "okay";
