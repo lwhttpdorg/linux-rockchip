@@ -487,13 +487,6 @@ void v4l2_m2m_job_finish(struct v4l2_m2m_dev *m2m_dev,
 	unsigned long flags;
 	bool schedule_next;
 
-	/*
-	 * This function should not be used for drivers that support
-	 * holding capture buffers. Those should use
-	 * v4l2_m2m_buf_done_and_job_finish() instead.
-	 */
-	WARN_ON(m2m_ctx->out_q_ctx.q.subsystem_flags &
-		VB2_V4L2_FL_SUPPORTS_M2M_HOLD_CAPTURE_BUF);
 	spin_lock_irqsave(&m2m_dev->job_spinlock, flags);
 	schedule_next = _v4l2_m2m_job_finish(m2m_dev, m2m_ctx);
 	spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags);
@@ -503,9 +496,9 @@ void v4l2_m2m_job_finish(struct v4l2_m2m_dev *m2m_dev,
 }
 EXPORT_SYMBOL(v4l2_m2m_job_finish);
 
-void v4l2_m2m_buf_done_and_job_finish(struct v4l2_m2m_dev *m2m_dev,
-				      struct v4l2_m2m_ctx *m2m_ctx,
-				      enum vb2_buffer_state state)
+static void _buf_done_and_job_finish(struct v4l2_m2m_dev *m2m_dev,
+				     struct v4l2_m2m_ctx *m2m_ctx,
+				     enum vb2_buffer_state state, bool finish)
 {
 	struct vb2_v4l2_buffer *src_buf, *dst_buf;
 	bool schedule_next = false;
@@ -532,12 +525,29 @@ void v4l2_m2m_buf_done_and_job_finish(struct v4l2_m2m_dev *m2m_dev,
 	 * before the CAPTURE buffer is done.
 	 */
 	v4l2_m2m_buf_done(src_buf, state);
-	schedule_next = _v4l2_m2m_job_finish(m2m_dev, m2m_ctx);
+	if (finish)
+		schedule_next = _v4l2_m2m_job_finish(m2m_dev, m2m_ctx);
 unlock:
 	spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags);
 
-	if (schedule_next)
+	if (schedule_next || !finish)
 		v4l2_m2m_schedule_next_job(m2m_dev, m2m_ctx);
+}
+
+
+void v4l2_m2m_buf_done_manual(struct v4l2_m2m_dev *m2m_dev,
+			      struct v4l2_m2m_ctx *m2m_ctx,
+			      enum vb2_buffer_state state)
+{
+	_buf_done_and_job_finish(m2m_dev, m2m_ctx, state, false);
+}
+EXPORT_SYMBOL(v4l2_m2m_buf_done_manual);
+
+void v4l2_m2m_buf_done_and_job_finish(struct v4l2_m2m_dev *m2m_dev,
+				      struct v4l2_m2m_ctx *m2m_ctx,
+				      enum vb2_buffer_state state)
+{
+	_buf_done_and_job_finish(m2m_dev, m2m_ctx, state, true);
 }
 EXPORT_SYMBOL(v4l2_m2m_buf_done_and_job_finish);
 
