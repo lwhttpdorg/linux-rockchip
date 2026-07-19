@@ -994,13 +994,11 @@ static const struct media_device_ops hantro_m2m_media_ops = {
 };
 
 /*
- * Some SoCs, like RK3588 have multiple identical Hantro cores, but the
- * kernel is currently missing support for multi-core handling. Exposing
- * separate devices for each core to userspace is bad, since that does
- * not allow scheduling tasks properly (and creates ABI). With this workaround
- * the driver will only probe for the first core and early exit for the other
- * cores. Once the driver gains multi-core support, the same technique
- * for detecting the main core can be used to cluster all cores together.
+ * Some SoCs have multiple identical Hantro cores, but the kernel is currently
+ * missing a generic clustered-core scheduler. By default only the first core
+ * is exposed, avoiding an accidental userspace ABI. Variants with independent
+ * cores can explicitly opt into separate V4L2 instances, allowing userspace
+ * to distribute independent jobs across them.
  */
 static int hantro_disable_multicore(struct hantro_dev *vpu)
 {
@@ -1008,6 +1006,9 @@ static int hantro_disable_multicore(struct hantro_dev *vpu)
 	const char *compatible;
 	bool is_main_core;
 	int ret;
+
+	if (vpu->variant->multi_instance)
+		return 0;
 
 	/* Intentionally ignores the fallback strings */
 	ret = of_property_read_string(vpu->dev->of_node, "compatible", &compatible);

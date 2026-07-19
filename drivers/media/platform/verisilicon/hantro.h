@@ -77,6 +77,8 @@ struct hantro_irq {
  * @double_buffer:		core needs double buffering
  * @legacy_regs:		core uses legacy register set
  * @late_postproc:		postproc must be set up at the end of the job
+ * @multi_instance:		allow identical hardware instances to be exposed
+ *				as separate V4L2 devices
  * @shared_devices:		an array of device ids that cannot run concurrently
  */
 struct hantro_variant {
@@ -102,6 +104,7 @@ struct hantro_variant {
 	unsigned int double_buffer : 1;
 	unsigned int legacy_regs : 1;
 	unsigned int late_postproc : 1;
+	unsigned int multi_instance : 1;
 	const struct of_device_id *shared_devices;
 };
 

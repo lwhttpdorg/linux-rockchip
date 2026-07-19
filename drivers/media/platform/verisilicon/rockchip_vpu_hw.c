@@ -768,7 +768,8 @@ const struct hantro_variant rk3568_vepu_variant = {
 	.num_irqs = ARRAY_SIZE(rk3568_vepu_irqs),
 	.init = rockchip_vpu_hw_init,
 	.clk_names = rockchip_vpu_clk_names,
-	.num_clocks = ARRAY_SIZE(rockchip_vpu_clk_names)
+	.num_clocks = ARRAY_SIZE(rockchip_vpu_clk_names),
+	.multi_instance = true,
 };
 
 const struct hantro_variant rk3568_vpu_variant = {
