@@ -155,6 +155,8 @@ struct rkvdec_dev {
 	spinlock_t cores_lock; /* serializes core list access */
 	struct rkvdec_core *main_core;
 	struct iommu_domain *iommu_global_domain;
+	unsigned int remove_count;
+	bool teardown_done;
 };
 
 struct rkvdec_ctx {

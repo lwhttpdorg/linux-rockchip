@@ -1837,7 +1837,12 @@ static struct rkvdec_dev *rkvdec_probe_get_first(struct device *dev)
 	if (is_first_core) {
 		of_node_put(first_node);
 
-		rkvdec = devm_kzalloc(dev, sizeof(*rkvdec), GFP_KERNEL);
+		/*
+		 * The decoder instance is shared by all cores. It cannot be
+		 * device-managed by the first core because platform devices can
+		 * be removed in any order.
+		 */
+		rkvdec = kzalloc(sizeof(*rkvdec), GFP_KERNEL);
 		if (!rkvdec)
 			return ERR_PTR(-ENOMEM);
 
@@ -1848,6 +1853,8 @@ static struct rkvdec_dev *rkvdec_probe_get_first(struct device *dev)
 	} else {
 		rkvdec = device_node_to_rkvdec(first_node);
 		of_node_put(first_node);
+		if (!rkvdec)
+			return ERR_PTR(-EPROBE_DEFER);
 	}
 
 	return rkvdec;
@@ -1873,23 +1880,29 @@ static int rkvdec_probe(struct platform_device *pdev)
 
 	ret = devm_clk_bulk_get_all_enabled(&pdev->dev, &core->clocks);
 	if (ret < 0)
-		return ret;
+		goto err_remove_core;
 
 	core->num_clocks = ret;
 	core->axi_clk = devm_clk_get(&pdev->dev, "axi");
 
 	if (rkvdec->variant->has_single_reg_region) {
 		core->regs = devm_platform_ioremap_resource(pdev, 0);
-		if (IS_ERR(core->regs))
-			return PTR_ERR(core->regs);
+		if (IS_ERR(core->regs)) {
+			ret = PTR_ERR(core->regs);
+			goto err_remove_core;
+		}
 	} else {
 		core->regs = devm_platform_ioremap_resource_byname(pdev, "function");
-		if (IS_ERR(core->regs))
-			return PTR_ERR(core->regs);
+		if (IS_ERR(core->regs)) {
+			ret = PTR_ERR(core->regs);
+			goto err_remove_core;
+		}
 
 		core->link = devm_platform_ioremap_resource_byname(pdev, "link");
-		if (IS_ERR(core->link))
-			return PTR_ERR(core->link);
+		if (IS_ERR(core->link)) {
+			ret = PTR_ERR(core->link);
+			goto err_remove_core;
+		}
 	}
 
 	if (iommu_get_domain_for_dev(&pdev->dev)) {
@@ -1915,21 +1928,23 @@ static int rkvdec_probe(struct platform_device *pdev)
 	ret = dma_set_coherent_mask(&pdev->dev, DMA_BIT_MASK(32));
 	if (ret) {
 		dev_err(&pdev->dev, "Could not set DMA coherent mask.\n");
-		return ret;
+		goto err_remove_core;
 	}
 
 	vb2_dma_contig_set_max_seg_size(&pdev->dev, DMA_BIT_MASK(32));
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq <= 0)
-		return -ENXIO;
+	if (irq <= 0) {
+		ret = -ENXIO;
+		goto err_remove_core;
+	}
 
 	ret = devm_request_threaded_irq(&pdev->dev, irq, NULL,
 					rkvdec_irq_handler, IRQF_ONESHOT,
 					dev_name(&pdev->dev), core);
 	if (ret) {
 		dev_err(&pdev->dev, "Could not request core IRQ\n");
-		return ret;
+		goto err_remove_core;
 	}
 
 	core->sram_pool = of_gen_pool_get(pdev->dev.of_node, "sram", 0);
@@ -1962,6 +1977,12 @@ err_disable_runtime_pm:
 	if (core->sram_pool)
 		gen_pool_destroy(core->sram_pool);
 
+err_remove_core:
+	platform_set_drvdata(pdev, NULL);
+	rkvdec->core_count--;
+	if (!rkvdec->core_count)
+		kfree(rkvdec);
+
 	return ret;
 }
 
@@ -1969,6 +1990,21 @@ static void rkvdec_remove(struct platform_device *pdev)
 {
 	struct rkvdec_dev *rkvdec = platform_get_drvdata(pdev);
 	int i;
+
+	if (!rkvdec)
+		return;
+
+	platform_set_drvdata(pdev, NULL);
+
+	/*
+	 * All cores share one V4L2 device and one rkvdec_dev. Tear the shared
+	 * instance down once, but keep its storage alive until every platform
+	 * device has run its remove callback.
+	 */
+	if (rkvdec->teardown_done)
+		goto count_removed;
+
+	rkvdec->teardown_done = true;
 
 	for (i = 0; i < rkvdec->core_count; i++)
 		cancel_delayed_work_sync(&rkvdec->cores[i].watchdog_work);
@@ -1984,6 +2020,11 @@ static void rkvdec_remove(struct platform_device *pdev)
 
 		rkvdec_free_rcb(rkvdec, &rkvdec->cores[i]);
 	}
+
+count_removed:
+	rkvdec->remove_count++;
+	if (rkvdec->remove_count == rkvdec->core_count)
+		kfree(rkvdec);
 }
 
 #ifdef CONFIG_PM
