@@ -31,6 +31,7 @@
 #define RKVDEC_8K_PIXELS		(7680 * 4320)
 
 struct rkvdec_ctx;
+struct rkvdec_core;
 struct rkvdec_rcb_config;
 
 struct rkvdec_ctrl_desc {
@@ -74,6 +75,7 @@ vb2_to_rkvdec_decoded_buf(struct vb2_buffer *buf)
 
 struct rkvdec_variant_ops {
 	irqreturn_t (*irq_handler)(struct rkvdec_ctx *ctx);
+	void (*reset)(struct rkvdec_core *core);
 	u32 (*colmv_size)(u16 width, u16 height);
 	void (*flatten_matrices)(u8 *output, const u8 *input, int matrices, int row_length);
 };
@@ -131,6 +133,7 @@ struct rkvdec_core {
 	struct clk_bulk_data *clocks;
 	unsigned int num_clocks;
 	struct clk *axi_clk;
+	struct reset_control *resets;
 	void __iomem *regs;
 	void __iomem *link;
 	struct delayed_work watchdog_work;
@@ -138,6 +141,7 @@ struct rkvdec_core {
 	struct iommu_domain *empty_domain;
 	struct rkvdec_rcb_config *rcb_config;
 	struct rkvdec_ctx *curr_ctx;
+	int irq;
 	int id;
 };
 

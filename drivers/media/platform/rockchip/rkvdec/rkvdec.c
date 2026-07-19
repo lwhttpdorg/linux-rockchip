@@ -11,8 +11,10 @@
 
 #include <linux/hw_bitfield.h>
 #include <linux/clk.h>
+#include <linux/delay.h>
 #include <linux/genalloc.h>
 #include <linux/interrupt.h>
+#include <linux/iopoll.h>
 #include <linux/iommu.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -21,6 +23,7 @@
 #include <linux/platform_device.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
+#include <linux/reset.h>
 #include <linux/slab.h>
 #include <linux/videodev2.h>
 #include <linux/workqueue.h>
@@ -34,6 +37,8 @@
 #include "rkvdec-vdpu381-regs.h"
 #include "rkvdec-vdpu383-regs.h"
 #include "rkvdec-rcb.h"
+
+static void rkvdec_abort_ctx(struct rkvdec_ctx *ctx);
 
 static bool rkvdec_image_fmt_match(enum rkvdec_image_fmt fmt1,
 				   enum rkvdec_image_fmt fmt2)
@@ -1075,16 +1080,21 @@ static void rkvdec_stop_streaming(struct vb2_queue *q)
 {
 	struct rkvdec_ctx *ctx = vb2_get_drv_priv(q);
 
+	/*
+	 * Stop a running job before returning queued buffers or releasing
+	 * format-specific auxiliary DMA memory.
+	 */
+	rkvdec_abort_ctx(ctx);
+
 	if (V4L2_TYPE_IS_OUTPUT(q->type)) {
 		const struct rkvdec_coded_fmt_desc *desc = ctx->coded_fmt_desc;
 
 		if (WARN_ON(!desc))
 			return;
 
+		/* This releases the format-specific auxiliary DMA buffers. */
 		if (desc->ops->stop)
 			desc->ops->stop(ctx);
-
-		vb2_wait_for_all_buffers(q);
 	}
 
 	rkvdec_queue_cleanup(q, VB2_BUF_STATE_ERROR);
@@ -1594,18 +1604,21 @@ static irqreturn_t vdpu381_irq_handler(struct rkvdec_ctx *ctx)
 	status = readl(core->regs + VDPU381_REG_STA_INT);
 	writel(0, core->regs + VDPU381_REG_STA_INT);
 
+	if (!cancel_delayed_work(&core->watchdog_work))
+		return IRQ_HANDLED;
+
 	if (status & VDPU381_STA_INT_DEC_RDY_STA) {
 		state = VB2_BUF_STATE_DONE;
 	} else {
 		state = VB2_BUF_STATE_ERROR;
-		if (status & (VDPU381_STA_INT_SOFTRESET_RDY |
-			      VDPU381_STA_INT_TIMEOUT |
-			      VDPU381_STA_INT_ERROR))
+		if (status & (VDPU381_STA_INT_TIMEOUT |
+			      VDPU381_STA_INT_ERROR)) {
+			ctx->dev->variant->ops->reset(core);
 			rkvdec_iommu_restore(core);
+		}
 	}
 
-	if (cancel_delayed_work(&core->watchdog_work))
-		rkvdec_buf_done(ctx, state);
+	rkvdec_buf_done(ctx, state);
 
 	return IRQ_HANDLED;
 }
@@ -1729,9 +1742,101 @@ static void rkvdec_watchdog_func(struct work_struct *work)
 	ctx = core->curr_ctx;
 	if (ctx) {
 		dev_err(core->dev, "Frame processing timed out!\n");
-		writel(RKVDEC_IRQ_DIS, core->regs + RKVDEC_REG_INTERRUPT);
+		if (ctx->dev->variant->ops->reset) {
+			ctx->dev->variant->ops->reset(core);
+			rkvdec_iommu_restore(core);
+		} else {
+			writel(RKVDEC_IRQ_DIS,
+			       core->regs + RKVDEC_REG_INTERRUPT);
+		}
 		rkvdec_buf_done(ctx, VB2_BUF_STATE_ERROR);
 	}
+}
+
+static void vdpu381_reset(struct rkvdec_core *core)
+{
+	u32 reg, status;
+	int ret;
+
+	/*
+	 * Stop the decoder before returning its buffers.  Merely disabling the
+	 * interrupt is not sufficient: a stalled VDPU381 may keep issuing DMA
+	 * writes after userspace has unmapped the capture buffer.
+	 */
+	reg = readl(core->regs + VDPU381_REG_IMPORTANT_EN);
+	writel(reg | VDPU381_DEC_IRQ_DISABLE,
+	       core->regs + VDPU381_REG_IMPORTANT_EN);
+
+	if (core->resets) {
+		ret = reset_control_assert(core->resets);
+		if (!ret) {
+			usleep_range(10, 20);
+			ret = reset_control_deassert(core->resets);
+			if (ret)
+				dev_err(core->dev,
+					"failed to deassert decoder reset: %d\n",
+					ret);
+			goto clear_status;
+		}
+
+		dev_err(core->dev, "failed to assert decoder reset: %d\n", ret);
+	}
+
+	writel(reg | VDPU381_DEC_IRQ_DISABLE | BIT(20) | BIT(21),
+	       core->regs + VDPU381_REG_IMPORTANT_EN);
+	ret = readl_poll_timeout(core->regs + VDPU381_REG_STA_INT, status,
+				 status & VDPU381_STA_INT_SOFTRESET_RDY,
+				 10, 100000);
+	if (ret)
+		dev_err(core->dev, "decoder soft reset timed out\n");
+
+clear_status:
+	writel(0, core->regs + VDPU381_REG_STA_INT);
+}
+
+static void rkvdec_abort_ctx(struct rkvdec_ctx *ctx)
+{
+	struct rkvdec_core *core = NULL;
+	struct rkvdec_dev *rkvdec = ctx->dev;
+	bool complete_job = false;
+	unsigned long flags;
+	unsigned int i;
+
+	/*
+	 * Cancelling the pending watchdog acts as the completion token also
+	 * used by the IRQ handler.  Once it succeeds, neither path will return
+	 * the same buffers behind us.
+	 */
+	spin_lock_irqsave(&rkvdec->cores_lock, flags);
+	for (i = 0; i < rkvdec->core_count; i++) {
+		if (rkvdec->cores[i].curr_ctx != ctx)
+			continue;
+
+		core = &rkvdec->cores[i];
+		complete_job = cancel_delayed_work(&core->watchdog_work);
+		break;
+	}
+	spin_unlock_irqrestore(&rkvdec->cores_lock, flags);
+
+	if (!core)
+		return;
+
+	if (complete_job) {
+		if (rkvdec->variant->ops->reset) {
+			rkvdec->variant->ops->reset(core);
+			rkvdec_iommu_restore(core);
+		}
+		synchronize_irq(core->irq);
+		rkvdec_buf_done(ctx, VB2_BUF_STATE_ERROR);
+		return;
+	}
+
+	/*
+	 * If cancellation lost to the watchdog or IRQ handler, wait until that
+	 * path has stopped touching the context and its buffers.
+	 */
+	flush_delayed_work(&core->watchdog_work);
+	synchronize_irq(core->irq);
 }
 
 static const struct rkvdec_variant_ops rk3399_variant_ops = {
@@ -1780,6 +1885,7 @@ static const struct rcb_size_info vdpu381_rcb_sizes[] = {
 
 static const struct rkvdec_variant_ops vdpu381_variant_ops = {
 	.irq_handler = vdpu381_irq_handler,
+	.reset = vdpu381_reset,
 	.colmv_size = rkvdec_colmv_size,
 	.flatten_matrices = transpose_and_flatten_matrices,
 };
@@ -1941,6 +2047,13 @@ static int rkvdec_probe(struct platform_device *pdev)
 	core->num_clocks = ret;
 	core->axi_clk = devm_clk_get(&pdev->dev, "axi");
 
+	core->resets = devm_reset_control_array_get_optional_exclusive(&pdev->dev);
+	if (IS_ERR(core->resets)) {
+		ret = dev_err_probe(&pdev->dev, PTR_ERR(core->resets),
+				    "failed to get reset controls\n");
+		goto err_remove_core;
+	}
+
 	if (rkvdec->variant->has_single_reg_region) {
 		core->regs = devm_platform_ioremap_resource(pdev, 0);
 		if (IS_ERR(core->regs)) {
@@ -1964,8 +2077,10 @@ static int rkvdec_probe(struct platform_device *pdev)
 	if (iommu_get_domain_for_dev(&pdev->dev)) {
 		core->empty_domain = iommu_paging_domain_alloc(core->dev);
 
-		if (IS_ERR(core->empty_domain))
+		if (IS_ERR(core->empty_domain)) {
 			dev_warn(core->dev, "cannot alloc new empty domain\n");
+			core->empty_domain = NULL;
+		}
 
 		if (!rkvdec->iommu_global_domain) {
 			rkvdec->iommu_global_domain = iommu_get_domain_for_dev(core->dev);
@@ -1994,6 +2109,7 @@ static int rkvdec_probe(struct platform_device *pdev)
 		ret = -ENXIO;
 		goto err_remove_core;
 	}
+	core->irq = irq;
 
 	ret = devm_request_threaded_irq(&pdev->dev, irq, NULL,
 					rkvdec_irq_handler, IRQF_ONESHOT,
