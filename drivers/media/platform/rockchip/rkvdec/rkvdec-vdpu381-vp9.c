@@ -547,10 +547,18 @@ static void config_registers(struct rkvdec_ctx *ctx,
 	struct rkvdec_vp9_ctx *vp9_ctx = ctx->priv;
 	struct rkvdec_vdpu381_regs_vp9 *regs = &vp9_ctx->regs;
 	const struct v4l2_vp9_segmentation *seg;
-	dma_addr_t rlc_addr, dst_addr;
+	dma_addr_t prob_addr, rlc_addr, dst_addr;
 	bool intra_only;
 	unsigned int i;
 	u32 pixels;
+
+	/*
+	 * Several VP9 parameter fields are assembled with bitwise OR operations.
+	 * Clear those per-frame parameters without clearing address registers:
+	 * not every address consumed by the VP9 entropy decoder is otherwise
+	 * rewritten by the code below.
+	 */
+	memset(&regs->vp9_param, 0, sizeof(regs->vp9_param));
 
 	dec_params = run->decode_params;
 	dst = vb2_to_rkvdec_decoded_buf(&run->base.bufs.dst->vb2_buf);
@@ -572,6 +580,8 @@ static void config_registers(struct rkvdec_ctx *ctx,
 			 V4L2_VP9_FRAME_FLAG_INTRA_ONLY));
 
 	regs->common.reg009_dec_mode.dec_mode = VDPU381_MODE_VP9;
+	regs->common.reg013_en_mode_set.cur_pic_is_idr =
+		!!(dec_params->flags & V4L2_VP9_FRAME_FLAG_KEY_FRAME);
 	regs->vp9_param.reg103.vp9_intra_only_flag = intra_only;
 
     /* Set config */
@@ -687,7 +697,9 @@ static void config_registers(struct rkvdec_ctx *ctx,
 		last->vp9.width == dst->vp9.width &&
 		last->vp9.height == dst->vp9.height;
 
-	regs->vp9_param.reg78_vp9_stream_size = stream_len;
+	regs->vp9_param.reg78_vp9_stream_size =
+		stream_len - dec_params->compressed_header_size -
+		dec_params->uncompressed_header_size;
 
 
 	for (i = 0; !intra_only && i < ARRAY_SIZE(ref_bufs); i++) {
@@ -735,8 +747,17 @@ static void config_registers(struct rkvdec_ctx *ctx,
 
 
 
-	regs->vp9_addr.cabactbl_base = vp9_ctx->priv_tbl.dma +
-		offsetof(struct rkvdec_vp9_priv_tbl, probs);
+	prob_addr = vp9_ctx->priv_tbl.dma +
+		    offsetof(struct rkvdec_vp9_priv_tbl, probs);
+
+	/*
+	 * VDPU381 uses the codec probability base (SWREG160) for VP9, while
+	 * its entropy decoder also fetches the packed table through the
+	 * compatibility table base (SWREG197).  Leaving the latter at zero
+	 * makes the IOMMU report reads at 0x0, 0x100, 0x200, ...
+	 */
+	regs->vp9_addr.vp9_delta_prob_base = prob_addr;
+	regs->vp9_addr.cabactbl_base = prob_addr;
 
 	regs->vp9_addr.vp9_count_base = vp9_ctx->count_tbl.dma;
 
@@ -814,6 +835,11 @@ static int rkvdec_vp9_run_preamble(struct rkvdec_ctx *ctx,
 		return -EINVAL;
 	prob_updates = ctrl->p_cur.p;
 	vp9_ctx->cur.tx_mode = prob_updates->tx_mode;
+
+	if (vb2_get_plane_payload(&run->base.bufs.src->vb2_buf, 0) <
+	    dec_params->compressed_header_size +
+	    dec_params->uncompressed_header_size)
+		return -EINVAL;
 
 	/*
 	 * vp9 stuff
