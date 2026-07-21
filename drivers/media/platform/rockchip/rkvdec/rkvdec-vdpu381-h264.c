@@ -413,6 +413,15 @@ static void rkvdec_h264_stop(struct rkvdec_ctx *ctx)
 	dma_free_coherent(ctx->dev->main_core->dev, h264_ctx->priv_tbl.size,
 			  h264_ctx->priv_tbl.cpu, h264_ctx->priv_tbl.dma);
 	kfree(h264_ctx);
+	ctx->priv = NULL;
+}
+
+static void rkvdec_h264_flush(struct rkvdec_ctx *ctx)
+{
+	struct rkvdec_h264_ctx *h264_ctx = ctx->priv;
+
+	memset(&h264_ctx->reflists, 0, sizeof(h264_ctx->reflists));
+	memset(&h264_ctx->regs, 0, sizeof(h264_ctx->regs));
 }
 
 static int rkvdec_h264_run(struct rkvdec_ctx *ctx)
@@ -462,6 +471,7 @@ const struct rkvdec_coded_fmt_ops rkvdec_vdpu381_h264_fmt_ops = {
 	.get_image_fmt = rkvdec_h264_get_image_fmt,
 	.start = rkvdec_h264_start,
 	.stop = rkvdec_h264_stop,
+	.flush = rkvdec_h264_flush,
 	.run = rkvdec_h264_run,
 	.try_ctrl = rkvdec_h264_try_ctrl,
 };

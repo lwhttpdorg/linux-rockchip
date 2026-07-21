@@ -175,6 +175,7 @@ struct rkvdec_vp9_ctx {
 	struct rkvdec_vp9_frame_info cur;
 	struct rkvdec_vp9_frame_info last;
 	struct rkvdec_vdpu381_regs_vp9 regs;
+	bool reset_pending;
 };
 
 static void write_coeff_plane(const u8 coef[6][6][3], u8 *coeff_plane)
@@ -828,6 +829,21 @@ static int rkvdec_vp9_run_preamble(struct rkvdec_ctx *ctx,
 	if (ret)
 		return ret;
 
+	if (vp9_ctx->reset_pending) {
+		struct rkvdec_vp9_priv_tbl *priv_tbl = vp9_ctx->priv_tbl.cpu;
+		unsigned int i;
+
+		memset(&vp9_ctx->cur, 0, sizeof(vp9_ctx->cur));
+		memset(&vp9_ctx->last, 0, sizeof(vp9_ctx->last));
+		memset(&vp9_ctx->regs, 0, sizeof(vp9_ctx->regs));
+		memset(priv_tbl->segmap, 0, sizeof(priv_tbl->segmap));
+		memset(vp9_ctx->count_tbl.cpu, 0, vp9_ctx->count_tbl.size);
+		for (i = 0; i < ARRAY_SIZE(vp9_ctx->frame_context); i++)
+			vp9_ctx->frame_context[i] = v4l2_vp9_default_probs;
+		vp9_ctx->probability_tables = v4l2_vp9_default_probs;
+		vp9_ctx->reset_pending = false;
+	}
+
 	run->decode_params = dec_params;
 
 	ctrl = v4l2_ctrl_find(&ctx->ctrl_hdl, V4L2_CID_STATELESS_VP9_COMPRESSED_HDR);
@@ -930,8 +946,12 @@ static void rkvdec_vp9_done(struct rkvdec_ctx *ctx,
 	unsigned int fctx_idx;
 
 	/* v4l2-specific stuff */
-	if (result == VB2_BUF_STATE_ERROR)
-		goto out_update_last;
+	if (result == VB2_BUF_STATE_ERROR) {
+		memset(&vp9_ctx->cur, 0, sizeof(vp9_ctx->cur));
+		memset(&vp9_ctx->last, 0, sizeof(vp9_ctx->last));
+		vp9_ctx->reset_pending = true;
+		return;
+	}
 
 	/*
 	 * vp9 stuff
@@ -1114,6 +1134,7 @@ static int rkvdec_vp9_start(struct rkvdec_ctx *ctx)
 
 	vp9_ctx->count_tbl.size = RKVDEC_VP9_COUNT_SIZE;
 	vp9_ctx->count_tbl.cpu = count_tbl;
+	vp9_ctx->reset_pending = true;
 	rkvdec_init_v4l2_vp9_count_tbl(ctx);
 
 	return 0;
@@ -1138,7 +1159,16 @@ static void rkvdec_vp9_stop(struct rkvdec_ctx *ctx)
 	dma_free_coherent(rkvdec->main_core->dev, vp9_ctx->priv_tbl.size,
 			  vp9_ctx->priv_tbl.cpu, vp9_ctx->priv_tbl.dma);
 	kfree(vp9_ctx);
+	ctx->priv = NULL;
+}
 
+static void rkvdec_vp9_flush(struct rkvdec_ctx *ctx)
+{
+	struct rkvdec_vp9_ctx *vp9_ctx = ctx->priv;
+
+	memset(&vp9_ctx->cur, 0, sizeof(vp9_ctx->cur));
+	memset(&vp9_ctx->last, 0, sizeof(vp9_ctx->last));
+	vp9_ctx->reset_pending = true;
 }
 
 static int rkvdec_vp9_adjust_fmt(struct rkvdec_ctx *ctx,
@@ -1174,6 +1204,7 @@ const struct rkvdec_coded_fmt_ops rkvdec_vdpu381_vp9_fmt_ops = {
 	.adjust_fmt = rkvdec_vp9_adjust_fmt,
 	.start = rkvdec_vp9_start,
 	.stop = rkvdec_vp9_stop,
+	.flush = rkvdec_vp9_flush,
 	.run = rkvdec_vp9_run,
 	.done = rkvdec_vp9_done,
 	.get_image_fmt = rkvdec_vp9_get_image_fmt,

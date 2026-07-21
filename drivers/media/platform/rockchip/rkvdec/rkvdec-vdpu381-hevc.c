@@ -583,6 +583,17 @@ static void rkvdec_hevc_stop(struct rkvdec_ctx *ctx)
 	dma_free_coherent(rkvdec->main_core->dev, hevc_ctx->priv_tbl.size,
 			  hevc_ctx->priv_tbl.cpu, hevc_ctx->priv_tbl.dma);
 	kfree(hevc_ctx);
+	ctx->priv = NULL;
+}
+
+static void rkvdec_hevc_flush(struct rkvdec_ctx *ctx)
+{
+	struct rkvdec_hevc_ctx *hevc_ctx = ctx->priv;
+
+	memset(&hevc_ctx->scaling_matrix_cache, 0,
+	       sizeof(hevc_ctx->scaling_matrix_cache));
+	memset(&hevc_ctx->st_cache, 0, sizeof(hevc_ctx->st_cache));
+	memset(&hevc_ctx->regs, 0, sizeof(hevc_ctx->regs));
 }
 
 static int rkvdec_hevc_run(struct rkvdec_ctx *ctx)
@@ -633,6 +644,7 @@ const struct rkvdec_coded_fmt_ops rkvdec_vdpu381_hevc_fmt_ops = {
 	.adjust_fmt = rkvdec_hevc_adjust_fmt,
 	.start = rkvdec_hevc_start,
 	.stop = rkvdec_hevc_stop,
+	.flush = rkvdec_hevc_flush,
 	.run = rkvdec_hevc_run,
 	.try_ctrl = rkvdec_hevc_try_ctrl,
 	.get_image_fmt = rkvdec_hevc_get_image_fmt,

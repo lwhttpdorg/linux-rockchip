@@ -15,6 +15,7 @@
 #include <linux/videodev2.h>
 #include <linux/wait.h>
 #include <linux/clk.h>
+#include <linux/mutex.h>
 #include <linux/spinlock.h>
 
 #include <media/v4l2-ctrls.h>
@@ -88,6 +89,7 @@ struct rkvdec_variant {
 	size_t num_rcb_sizes;
 	const struct rkvdec_variant_ops *ops;
 	bool has_single_reg_region;
+	bool skip_iommu_restore;
 	unsigned int quirks;
 };
 
@@ -96,6 +98,7 @@ struct rkvdec_coded_fmt_ops {
 			  struct v4l2_format *f);
 	int (*start)(struct rkvdec_ctx *ctx);
 	void (*stop)(struct rkvdec_ctx *ctx);
+	void (*flush)(struct rkvdec_ctx *ctx);
 	int (*run)(struct rkvdec_ctx *ctx);
 	void (*done)(struct rkvdec_ctx *ctx, struct vb2_v4l2_buffer *src_buf,
 		     struct vb2_v4l2_buffer *dst_buf,
@@ -133,7 +136,6 @@ struct rkvdec_core {
 	struct clk_bulk_data *clocks;
 	unsigned int num_clocks;
 	struct clk *axi_clk;
-	struct reset_control *resets;
 	void __iomem *regs;
 	void __iomem *link;
 	struct delayed_work watchdog_work;
@@ -173,9 +175,14 @@ struct rkvdec_ctx {
 	enum rkvdec_image_fmt image_fmt;
 	u32 colmv_offset;
 	struct rkvdec_core *core;
+	struct mutex run_lock;
+	spinlock_t job_lock;
+	wait_queue_head_t job_done_wq;
+	unsigned int jobs_inflight;
 	void *priv;
 	u8 has_sps_st_rps: 1;
 	u8 has_sps_lt_rps: 1;
+	bool stopping;
 };
 
 static inline struct rkvdec_ctx *file_to_rkvdec_ctx(struct file *filp)
