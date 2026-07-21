@@ -5,6 +5,9 @@
  * Author: Benjamin Gaignard <benjamin.gaignard@collabora.com>
  */
 
+#include <linux/delay.h>
+#include <linux/iopoll.h>
+
 #include <media/v4l2-mem2mem.h>
 #include "hantro.h"
 #include "hantro_v4l2.h"
@@ -212,6 +215,31 @@ static void rockchip_vpu981_av1_dec_clean_refs(struct hantro_ctx *ctx)
 		if (!used)
 			rockchip_vpu981_av1_dec_frame_unref(ctx, idx);
 	}
+}
+
+static int rockchip_vpu981_av1_dec_validate_refs(struct hantro_ctx *ctx)
+{
+	struct hantro_av1_dec_hw_ctx *av1_dec = &ctx->av1_dec;
+	const struct v4l2_ctrl_av1_frame *frame = av1_dec->ctrls.frame;
+	int ref;
+
+	/* Intra frames do not read an external reference picture. */
+	if (IS_INTRA(frame->frame_type))
+		return 0;
+
+	/*
+	 * STREAMOFF clears the kernel reference map. Userspace may still feed
+	 * inter frames while advancing to the next random-access frame. Never
+	 * substitute slot zero for a missing reference: once the current frame
+	 * is installed there, that makes the decoder read and write the same
+	 * DMA buffer and can stall the AV1 block indefinitely.
+	 */
+	for (ref = 0; ref < V4L2_AV1_REFS_PER_FRAME; ref++) {
+		if (rockchip_vpu981_get_frame_index(ctx, ref) < 0)
+			return -EINVAL;
+	}
+
+	return 0;
 }
 
 static size_t rockchip_vpu981_av1_dec_luma_size(struct hantro_ctx *ctx)
@@ -1163,6 +1191,52 @@ void rockchip_vpu981_av1_dec_done(struct hantro_ctx *ctx)
 	rockchip_vpu981_av1_dec_update_prob(ctx);
 }
 
+void rockchip_vpu981_av1_dec_flush(struct hantro_ctx *ctx)
+{
+	struct hantro_av1_dec_hw_ctx *av1_dec = &ctx->av1_dec;
+
+	memset(&av1_dec->ctrls, 0, sizeof(av1_dec->ctrls));
+	memset(av1_dec->frame_refs, 0, sizeof(av1_dec->frame_refs));
+	memset(av1_dec->ref_frame_sign_bias, 0,
+	       sizeof(av1_dec->ref_frame_sign_bias));
+	memset(av1_dec->cdfs_last, 0, sizeof(av1_dec->cdfs_last));
+	memset(av1_dec->cdfs_last_ndvc, 0, sizeof(av1_dec->cdfs_last_ndvc));
+	av1_dec->current_frame_index = 0;
+	av1_dec->cdfs = &av1_dec->default_cdfs;
+	av1_dec->cdfs_ndvc = &av1_dec->default_cdfs_ndvc;
+	rockchip_av1_set_default_cdfs(av1_dec->cdfs, av1_dec->cdfs_ndvc);
+}
+
+void rockchip_vpu981_av1_dec_reset(struct hantro_ctx *ctx)
+{
+	struct hantro_dev *vpu = ctx->dev;
+	u32 status;
+	int ret;
+
+	/*
+	 * Abort the decoder and wait until it no longer owns its DMA buffers
+	 * before the mem2mem core returns them to userspace.
+	 */
+	hantro_reg_write(vpu, &av1_dec_abort_e, 1);
+	ret = readl_poll_timeout(vpu->dec_base + AV1_REG_INTERRUPT, status,
+				 !(status & AV1_REG_INTERRUPT_DEC_E),
+				 10, 100000);
+	if (ret) {
+		vpu_err("AV1 decoder abort timed out\n");
+
+		ret = reset_control_assert(vpu->resets);
+		if (!ret) {
+			usleep_range(10, 20);
+			ret = reset_control_deassert(vpu->resets);
+		}
+		if (ret)
+			vpu_err("failed to reset AV1 decoder: %d\n", ret);
+	}
+
+	vdpu_write(vpu, 0, AV1_REG_INTERRUPT);
+	rockchip_vpu981_av1_dec_flush(ctx);
+}
+
 static void rockchip_vpu981_av1_dec_set_prob(struct hantro_ctx *ctx)
 {
 	struct hantro_av1_dec_hw_ctx *av1_dec = &ctx->av1_dec;
@@ -1902,7 +1976,7 @@ static void rockchip_vpu981_av1_dec_set_reference_frames(struct hantro_ctx *ctx)
 
 	for (i = V4L2_AV1_REF_LAST_FRAME; i < V4L2_AV1_TOTAL_REFS_PER_FRAME; i++) {
 		u32 ref = i - 1;
-		int idx = 0;
+		int idx;
 		int width, height;
 
 		if (allow_intrabc) {
@@ -1910,8 +1984,7 @@ static void rockchip_vpu981_av1_dec_set_reference_frames(struct hantro_ctx *ctx)
 			width = frame->frame_width_minus_1 + 1;
 			height = frame->frame_height_minus_1 + 1;
 		} else {
-			if (rockchip_vpu981_get_frame_index(ctx, ref) > 0)
-				idx = rockchip_vpu981_get_frame_index(ctx, ref);
+			idx = rockchip_vpu981_get_frame_index(ctx, ref);
 			width = av1_dec->frame_refs[idx].width;
 			height = av1_dec->frame_refs[idx].height;
 		}
@@ -2144,8 +2217,17 @@ int rockchip_vpu981_av1_dec_run(struct hantro_ctx *ctx)
 		goto prepare_error;
 	}
 
+	ret = rockchip_vpu981_av1_dec_validate_refs(ctx);
+	if (ret)
+		goto prepare_error;
+
 	rockchip_vpu981_av1_dec_clean_refs(ctx);
-	rockchip_vpu981_av1_dec_frame_ref(ctx, vb2_src->vb2_buf.timestamp);
+	ret = rockchip_vpu981_av1_dec_frame_ref(ctx,
+					       vb2_src->vb2_buf.timestamp);
+	if (ret < 0) {
+		ret = -ENOSPC;
+		goto prepare_error;
+	}
 
 	rockchip_vpu981_av1_dec_set_parameters(ctx);
 	rockchip_vpu981_av1_dec_set_global_model(ctx);
@@ -2192,8 +2274,7 @@ int rockchip_vpu981_av1_dec_run(struct hantro_ctx *ctx)
 	return 0;
 
 prepare_error:
-	hantro_end_prepare_run(ctx);
-	hantro_irq_done(vpu, VB2_BUF_STATE_ERROR);
+	hantro_cancel_prepare_run(ctx);
 	return ret;
 }
 

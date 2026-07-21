@@ -978,6 +978,11 @@ static void hantro_stop_streaming(struct vb2_queue *q)
 {
 	struct hantro_ctx *ctx = vb2_get_drv_priv(q);
 
+	if (!ctx->is_encoder && V4L2_TYPE_IS_CAPTURE(q->type) &&
+	    vb2_is_streaming(&ctx->fh.m2m_ctx->out_q_ctx.q) &&
+	    ctx->codec_ops && ctx->codec_ops->flush)
+		ctx->codec_ops->flush(ctx);
+
 	if (hantro_vq_is_coded(q)) {
 		hantro_postproc_free(ctx);
 		if (ctx->codec_ops && ctx->codec_ops->exit)

@@ -611,6 +611,8 @@ static const struct hantro_codec_ops rk3588_vpu981_codec_ops[] = {
 		.init = rockchip_vpu981_av1_dec_init,
 		.exit = rockchip_vpu981_av1_dec_exit,
 		.done = rockchip_vpu981_av1_dec_done,
+		.flush = rockchip_vpu981_av1_dec_flush,
+		.reset = rockchip_vpu981_av1_dec_reset,
 	},
 };
 /*

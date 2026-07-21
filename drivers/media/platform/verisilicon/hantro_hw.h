@@ -384,6 +384,7 @@ struct hantro_codec_ops {
 	void (*exit)(struct hantro_ctx *ctx);
 	int (*run)(struct hantro_ctx *ctx);
 	void (*done)(struct hantro_ctx *ctx);
+	void (*flush)(struct hantro_ctx *ctx);
 	void (*reset)(struct hantro_ctx *ctx);
 };
 
@@ -432,6 +433,7 @@ void hantro_irq_done(struct hantro_dev *vpu,
 		     enum vb2_buffer_state result);
 void hantro_start_prepare_run(struct hantro_ctx *ctx);
 void hantro_end_prepare_run(struct hantro_ctx *ctx);
+void hantro_cancel_prepare_run(struct hantro_ctx *ctx);
 
 irqreturn_t hantro_g1_irq(int irq, void *dev_id);
 void hantro_g1_reset(struct hantro_ctx *ctx);
@@ -463,6 +465,8 @@ int rockchip_vpu981_av1_dec_init(struct hantro_ctx *ctx);
 void rockchip_vpu981_av1_dec_exit(struct hantro_ctx *ctx);
 int rockchip_vpu981_av1_dec_run(struct hantro_ctx *ctx);
 void rockchip_vpu981_av1_dec_done(struct hantro_ctx *ctx);
+void rockchip_vpu981_av1_dec_flush(struct hantro_ctx *ctx);
+void rockchip_vpu981_av1_dec_reset(struct hantro_ctx *ctx);
 
 static inline unsigned short hantro_vp9_num_sbs(unsigned short dimension)
 {
