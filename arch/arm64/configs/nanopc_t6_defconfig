@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/arm64 7.1.4 Kernel Configuration
+# Linux/arm64 7.1.6 Kernel Configuration
 #
 CONFIG_CC_VERSION_TEXT="gcc (Debian 14.2.0-19) 14.2.0"
 CONFIG_CC_IS_GCC=y
@@ -1683,7 +1683,6 @@ CONFIG_BT_MTKSDIO=m
 CONFIG_BT_MTKUART=m
 # CONFIG_BT_VIRTIO is not set
 # CONFIG_BT_NXPUART is not set
-# CONFIG_BT_INTEL_PCIE is not set
 # end of Bluetooth device drivers
 
 CONFIG_AF_RXRPC=m
@@ -4956,6 +4955,7 @@ CONFIG_SND_MPU401=m
 #
 # HD-Audio
 #
+# CONFIG_SND_HDA_INTEL is not set
 # end of HD-Audio
 
 # CONFIG_SND_SPI is not set
