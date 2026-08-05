@@ -1,0 +1,436 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/dts-v1/;
+#include <dt-bindings/media/video-interfaces.h>
+#include "rk3566-lubancat-1.dts"
+
+/*
+ * LubanCat Zero W shares the RK809 power tree with LubanCat 1, but has a
+ * different peripheral layout.  In particular it has no eMMC, Ethernet or
+ * PCIe connector.  Its TL8821CUB WLAN/BT module is attached to USB_HOST2.
+ */
+
+/delete-node/ &gmac1_clkin;
+/delete-node/ &vcc3v3_pcie;
+/delete-node/ &vcc5v0_usb20_host;
+/delete-node/ &vcc5v0_usb30_host;
+
+/ {
+	model = "EmbedFire LubanCat Zero W";
+	compatible = "embedfire,lubancat-zero-w", "embedfire,lubancat-zero",
+		     "rockchip,rk3566";
+
+	aliases {
+		/delete-property/ ethernet0;
+		/delete-property/ mmc1;
+	};
+
+	/*
+	 * PWM0_M1 is routed to the backlight pin on the DSI connector.  A panel
+	 * description must enable this node because brightness curves and panel
+	 * initialization sequences are panel specific.
+	 */
+	dsi_backlight: backlight {
+		compatible = "pwm-backlight";
+		power-supply = <&vdd_lcd_5v>;
+		pwms = <&pwm0 0 50000 0>;
+		status = "disabled";
+	};
+
+	imx415_clk: clock-imx415 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <37125000>;
+		clock-output-names = "imx415_xvclk";
+	};
+
+	/* Switched 5 V rail routed to the MIPI-CSI connector. */
+	vdd_cam_5v: regulator-vdd-cam-5v {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpio = <&gpio0 RK_PC6 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_pwr_en>;
+		regulator-name = "vdd_cam_5v";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		startup-delay-us = <5000>;
+		vin-supply = <&vcc5v0_sys>;
+	};
+
+	/* CAM_PWDN is active high, so low enables the camera module. */
+	cam_sensor_en: regulator-camera-enable {
+		compatible = "regulator-fixed";
+		gpio = <&gpio0 RK_PC3 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_pwdn>;
+		regulator-name = "cam_sensor_enable";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vdd_cam_5v>;
+	};
+
+	/* The IMX415 module derives its sensor rails from the connector's 5 V. */
+	cam_avdd_2v9: regulator-camera-avdd {
+		compatible = "regulator-fixed";
+		regulator-name = "cam_avdd_2v9";
+		regulator-min-microvolt = <2900000>;
+		regulator-max-microvolt = <2900000>;
+		vin-supply = <&cam_sensor_en>;
+	};
+
+	cam_dvdd_1v1: regulator-camera-dvdd {
+		compatible = "regulator-fixed";
+		regulator-name = "cam_dvdd_1v1";
+		regulator-min-microvolt = <1100000>;
+		regulator-max-microvolt = <1100000>;
+		vin-supply = <&cam_sensor_en>;
+	};
+
+	cam_ovdd_1v8: regulator-camera-ovdd {
+		compatible = "regulator-fixed";
+		regulator-name = "cam_ovdd_1v8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		vin-supply = <&cam_sensor_en>;
+	};
+
+	/* 5 V rail for an optional MIPI-DSI panel. */
+	vdd_lcd_5v: regulator-vdd-lcd-5v {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpio = <&gpio0 RK_PC0 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&lcd_pwr_en>;
+		regulator-name = "vdd_lcd_5v";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vcc5v0_sys>;
+	};
+
+	/* The connector's 3.3 V rail is enabled in hardware. */
+	vdd_lcd_3v3: regulator-vdd-lcd-3v3 {
+		compatible = "regulator-fixed";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-name = "vdd_lcd_3v3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		vin-supply = <&vcc3v3_sys>;
+	};
+
+	/* Active-low gate for the onboard TL8821CUB USB WLAN/BT module. */
+	vcc3v3_wlan: regulator-vcc3v3-wlan {
+		compatible = "regulator-fixed";
+		gpio = <&gpio0 RK_PC1 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&wlan_pwr_en>;
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-name = "vcc3v3_wlan";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		vin-supply = <&vcc3v3_sys>;
+	};
+};
+
+&combphy1 {
+	status = "disabled";
+};
+
+&combphy2 {
+	status = "disabled";
+};
+
+/*
+ * The DSI connector is wired to DSI0 and I2C1.  RK3566 only supports one
+ * display output, so a panel-specific overlay must disable HDMI, add the
+ * panel node, then enable DSI0, its PHY and the backlight.  Keep this path
+ * disabled by default because panel initialization sequences differ.
+ */
+&dsi_dphy0 {
+	status = "disabled";
+};
+
+&dsi0 {
+	status = "disabled";
+
+	ports {
+		dsi0_in: port@0 {
+			reg = <0>;
+
+			dsi0_in_vp0: endpoint {
+				remote-endpoint = <&vp0_out_dsi0>;
+			};
+		};
+	};
+};
+
+&gmac1 {
+	status = "disabled";
+};
+
+/* I2C1 is shared by the MIPI-DSI touch controller and MIPI-CSI camera. */
+&i2c1 {
+	clock-frequency = <100000>;
+	status = "okay";
+
+	imx415: camera@1a {
+		compatible = "sony,imx415";
+		reg = <0x1a>;
+		avdd-supply = <&cam_avdd_2v9>;
+		clocks = <&imx415_clk>;
+		dvdd-supply = <&cam_dvdd_1v1>;
+		ovdd-supply = <&cam_ovdd_1v8>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_reset>;
+		reset-gpios = <&gpio0 RK_PC4 GPIO_ACTIVE_LOW>;
+
+		port {
+			imx415_out: endpoint {
+				data-lanes = <1 2>;
+				link-frequencies = /bits/ 64 <445500000>;
+				remote-endpoint = <&lubancat_csi2_input>;
+			};
+		};
+	};
+
+	/* Optional GT911 fitted to EmbedFire's DSI touch displays. */
+	touchscreen@5d {
+		compatible = "goodix,gt911";
+		reg = <0x5d>;
+		AVDD28-supply = <&vdd_lcd_3v3>;
+		VDDIO-supply = <&vdd_lcd_3v3>;
+		interrupt-parent = <&gpio3>;
+		interrupts = <RK_PA1 IRQ_TYPE_LEVEL_LOW>;
+		irq-gpios = <&gpio3 RK_PA1 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_int &touch_reset>;
+		reset-gpios = <&gpio3 RK_PA2 GPIO_ACTIVE_LOW>;
+		status = "disabled";
+		touchscreen-inverted-x;
+		touchscreen-inverted-y;
+	};
+};
+
+/* 40-pin header pins 3 (SDA) and 5 (SCL). Conflicts with UART3. */
+&i2c3 {
+	clock-frequency = <400000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c3m0_xfer>;
+	status = "okay";
+};
+
+/* 40-pin header pins 27 (SDA) and 28 (SCL). */
+&i2c5 {
+	clock-frequency = <400000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c5m0_xfer>;
+	status = "okay";
+};
+
+/* HDMI audio uses I2S0 as its CPU DAI. */
+&i2s0_8ch {
+	status = "okay";
+};
+
+&i2s1_8ch {
+	status = "disabled";
+};
+
+/* Two-lane IMX415 4K15 -> CSI-2 host -> VICAP capture path. */
+&csi_dphy {
+	status = "okay";
+};
+
+&mipi_csi2 {
+	status = "okay";
+};
+
+&mipi_csi2_in {
+	lubancat_csi2_input: endpoint {
+		bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+		data-lanes = <1 2>;
+		remote-endpoint = <&imx415_out>;
+	};
+};
+
+&mipi_csi2_out {
+	lubancat_csi2_output: endpoint {
+		remote-endpoint = <&lubancat_vicap_input>;
+	};
+};
+
+&vicap {
+	status = "okay";
+};
+
+&vicap_mipi {
+	lubancat_vicap_input: endpoint {
+		remote-endpoint = <&lubancat_csi2_output>;
+	};
+};
+
+&vicap_mmu {
+	status = "okay";
+};
+
+&pcie2x1 {
+	/delete-property/ vpcie3v3-supply;
+	status = "disabled";
+};
+
+&pinctrl {
+	camera {
+		cam_pwr_en: cam-pwr-en {
+			rockchip,pins = <0 RK_PC6 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		cam_pwdn: cam-pwdn {
+			rockchip,pins = <0 RK_PC3 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		cam_reset: cam-reset {
+			rockchip,pins = <0 RK_PC4 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	display {
+		lcd_pwr_en: lcd-pwr-en {
+			rockchip,pins = <0 RK_PC0 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		lcd_reset: lcd-reset {
+			rockchip,pins = <3 RK_PA4 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		lcd_te: lcd-te {
+			rockchip,pins = <3 RK_PA3 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		touch_int: touch-int {
+			rockchip,pins = <3 RK_PA1 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+
+		touch_reset: touch-reset {
+			rockchip,pins = <3 RK_PA2 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	spi3-cs {
+		spi3_cs1_gpio: spi3-cs1-gpio {
+			rockchip,pins = <1 RK_PB3 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+
+	wlan {
+		wlan_pwr_en: wlan-pwr-en {
+			rockchip,pins = <0 RK_PC1 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+};
+
+/* PWM0_M1 drives LCD_BL_PWM; a panel overlay enables it with DSI0. */
+&pwm0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pwm0m1_pins>;
+	status = "disabled";
+};
+
+/* PWM3 on header pin 12. */
+&pwm3 {
+	status = "okay";
+};
+
+/* PWM11 on header pin 32. */
+&pwm11 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pwm11m0_pins>;
+	status = "okay";
+};
+
+/* The board has no eMMC; the microSD card is mmc0. */
+&sdhci {
+	status = "disabled";
+};
+
+/*
+ * SPI3 on pins 19/21/23/24. Pin 26 is a second, GPIO-driven chip select.
+ * This default provides /dev/spidev* for development on both chip selects.
+ */
+&spi3 {
+	cs-gpios = <0>, <&gpio1 RK_PB3 GPIO_ACTIVE_LOW>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi3m1_pins &spi3m1_cs0 &spi3_cs1_gpio>;
+	status = "okay";
+
+	spidev@0 {
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <24000000>;
+	};
+
+	spidev@1 {
+		compatible = "rohm,dh2228fv";
+		reg = <1>;
+		spi-max-frequency = <24000000>;
+	};
+};
+
+/* UART4 on header pins 33/35. Conflicts with PWM8/PWM9. */
+&uart4 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart4m1_xfer>;
+	status = "okay";
+};
+
+/* UART8 on header pins 8/10. */
+&uart8 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart8m0_xfer>;
+	status = "okay";
+};
+
+/* USB_OTG0: Type-C power/download connector, USB 2.0 only. */
+&usb_host0_xhci {
+	maximum-speed = "high-speed";
+	phy-names = "usb2-phy";
+	phys = <&usb2phy0_otg>;
+	status = "okay";
+};
+
+/* USB_HOST2: onboard TL8821CUB WLAN/BT. */
+&usb_host0_ehci {
+	status = "okay";
+};
+
+&usb_host0_ohci {
+	status = "okay";
+};
+
+/* USB_HOST3 is not connected on the Zero W. */
+&usb2phy1_host {
+	status = "disabled";
+};
+
+&usb_host1_ehci {
+	status = "disabled";
+};
+
+&usb_host1_ohci {
+	status = "disabled";
+};
+
+/* USB_HOST1: external Type-C host connector, USB 2.0 only. */
+&usb_host1_xhci {
+	maximum-speed = "high-speed";
+	phy-names = "usb2-phy";
+	phys = <&usb2phy0_host>;
+	status = "okay";
+};
+
+&vp0 {
+	vp0_out_dsi0: endpoint@ROCKCHIP_VOP2_EP_MIPI0 {
+		reg = <ROCKCHIP_VOP2_EP_MIPI0>;
+		remote-endpoint = <&dsi0_in_vp0>;
+	};
+};
