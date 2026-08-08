@@ -568,6 +568,7 @@ struct imx415 {
 
 	unsigned int cur_mode;
 	unsigned int num_data_lanes;
+	struct v4l2_mbus_config_mipi_csi2 csi2;
 };
 
 /*
@@ -1060,6 +1061,21 @@ static int imx415_get_selection(struct v4l2_subdev *sd,
 	return -EINVAL;
 }
 
+static int imx415_get_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
+				  struct v4l2_mbus_config *config)
+{
+	struct imx415 *sensor = to_imx415(sd);
+
+	if (pad != 0)
+		return -EINVAL;
+
+	config->type = V4L2_MBUS_CSI2_DPHY;
+	config->link_freq = supported_modes[sensor->cur_mode].lane_rate / 2;
+	config->bus.mipi_csi2 = sensor->csi2;
+
+	return 0;
+}
+
 static int imx415_init_state(struct v4l2_subdev *sd,
 			     struct v4l2_subdev_state *state)
 {
@@ -1085,6 +1101,7 @@ static const struct v4l2_subdev_pad_ops imx415_subdev_pad_ops = {
 	.get_fmt = v4l2_subdev_get_fmt,
 	.set_fmt = imx415_set_format,
 	.get_selection = imx415_get_selection,
+	.get_mbus_config = imx415_get_mbus_config,
 };
 
 static const struct v4l2_subdev_ops imx415_subdev_ops = {
@@ -1268,6 +1285,7 @@ static int imx415_parse_hw_config(struct imx415 *sensor)
 	case 2:
 	case 4:
 		sensor->num_data_lanes = bus_cfg.bus.mipi_csi2.num_data_lanes;
+		sensor->csi2 = bus_cfg.bus.mipi_csi2;
 		break;
 	default:
 		ret = dev_err_probe(sensor->dev, -EINVAL,
