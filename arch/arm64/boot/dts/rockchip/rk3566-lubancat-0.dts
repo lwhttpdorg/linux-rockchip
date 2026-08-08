@@ -20,6 +20,7 @@
 		     "rockchip,rk3566";
 
 	aliases {
+		csi2dphy1 = &csi2_dphy1;
 		/delete-property/ ethernet0;
 		/delete-property/ mmc1;
 	};
@@ -187,9 +188,10 @@
 
 		port {
 			imx415_out: endpoint {
+				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
 				data-lanes = <1 2>;
 				link-frequencies = /bits/ 64 <445500000>;
-				remote-endpoint = <&lubancat_csi2_input>;
+				remote-endpoint = <&lubancat_dphy_input>;
 			};
 		};
 	};
@@ -237,41 +239,75 @@
 	status = "disabled";
 };
 
-/* Two-lane IMX415 4K15 -> CSI-2 host -> VICAP capture path. */
+/* Two-lane IMX415 4K15 -> CSI D-PHY -> ISP2.1 capture path. */
 &csi_dphy {
+	compatible = "rockchip,rk3568-csi2-dphy-hw";
 	status = "okay";
 };
 
-&mipi_csi2 {
+&csi2_dphy1 {
 	status = "okay";
-};
 
-&mipi_csi2_in {
-	lubancat_csi2_input: endpoint {
-		bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
-		data-lanes = <1 2>;
-		remote-endpoint = <&imx415_out>;
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+
+			lubancat_dphy_input: endpoint {
+				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+				clock-lanes = <0>;
+				data-lanes = <1 2>;
+				remote-endpoint = <&imx415_out>;
+			};
+		};
+
+		port@1 {
+			reg = <1>;
+
+			lubancat_dphy_output: endpoint {
+				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+				clock-lanes = <0>;
+				data-lanes = <1 2>;
+				remote-endpoint = <&lubancat_isp_input>;
+			};
+		};
 	};
 };
 
-&mipi_csi2_out {
-	lubancat_csi2_output: endpoint {
-		remote-endpoint = <&lubancat_vicap_input>;
+&mipi_csi2 {
+	status = "disabled";
+};
+
+&rkisp {
+	max-input = <3864 2192 15>;
+	status = "okay";
+};
+
+&rkisp_mmu {
+	status = "okay";
+};
+
+&rkisp_vir0 {
+	status = "okay";
+
+	port {
+		lubancat_isp_input: endpoint {
+			bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+			clock-lanes = <0>;
+			data-lanes = <1 2>;
+			remote-endpoint = <&lubancat_dphy_output>;
+		};
 	};
 };
 
 &vicap {
-	status = "okay";
-};
-
-&vicap_mipi {
-	lubancat_vicap_input: endpoint {
-		remote-endpoint = <&lubancat_csi2_output>;
-	};
+	status = "disabled";
 };
 
 &vicap_mmu {
-	status = "okay";
+	status = "disabled";
 };
 
 &pcie2x1 {

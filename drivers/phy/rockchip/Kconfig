@@ -2,6 +2,19 @@
 #
 # Phy drivers for Rockchip platforms
 #
+config PHY_ROCKCHIP_CSI2_DPHY
+	tristate "Rockchip RK356x CSI2 D-PHY media driver"
+	depends on VIDEO_DEV
+	depends on (ARCH_ROCKCHIP && OF) || COMPILE_TEST
+	select GENERIC_PHY
+	select MEDIA_CONTROLLER
+	select VIDEO_V4L2_SUBDEV_API
+	select V4L2_FWNODE
+	help
+	  Enable the Rockchip BSP-style CSI2 D-PHY hardware and V4L2
+	  subdevice drivers used to connect an RK356x sensor directly to
+	  the RKISP2.1 input.
+
 config PHY_ROCKCHIP_DP
 	tristate "Rockchip Display Port PHY Driver"
 	depends on ARCH_ROCKCHIP && OF
