@@ -25,8 +25,12 @@
 #define IMX415_PIXEL_ARRAY_LEFT	  0
 #define IMX415_PIXEL_ARRAY_WIDTH  3864
 #define IMX415_PIXEL_ARRAY_HEIGHT 2192
+#define IMX415_ISP_CROP_WIDTH	  3840
+#define IMX415_ISP_CROP_HEIGHT	  2160
 #define IMX415_PIXEL_ARRAY_VBLANK 58
 #define IMX415_EXPOSURE_OFFSET	  8
+
+#define IMX415_ISP_CROP_START(src, dst)	((((src) - (dst)) / 2) & ~3)
 
 #define IMX415_PIXEL_RATE_74_25MHZ	891000000
 #define IMX415_PIXEL_RATE_72MHZ		864000000
@@ -1046,19 +1050,27 @@ static int imx415_get_selection(struct v4l2_subdev *sd,
 				struct v4l2_subdev_state *sd_state,
 				struct v4l2_subdev_selection *sel)
 {
-	switch (sel->target) {
-	case V4L2_SEL_TGT_CROP:
-	case V4L2_SEL_TGT_CROP_DEFAULT:
-	case V4L2_SEL_TGT_CROP_BOUNDS:
-		sel->r.top = IMX415_PIXEL_ARRAY_TOP;
-		sel->r.left = IMX415_PIXEL_ARRAY_LEFT;
-		sel->r.width = IMX415_PIXEL_ARRAY_WIDTH;
-		sel->r.height = IMX415_PIXEL_ARRAY_HEIGHT;
+	/*
+	 * The sensor outputs its complete 3864x2192 pixel array.  RKISP2.1
+	 * requires Bayer input dimensions aligned to 16 pixels horizontally
+	 * and 8 lines vertically, so let the ISP crop the optical margins to
+	 * the standard 3840x2160 active image.  Rockchip's ISP driver uses
+	 * CROP_BOUNDS to distinguish this ISP-side crop from a crop performed
+	 * by the sensor itself.
+	 */
+	if (sel->target != V4L2_SEL_TGT_CROP_BOUNDS)
+		return -EINVAL;
 
-		return 0;
-	}
+	sel->r.left = IMX415_PIXEL_ARRAY_LEFT +
+		IMX415_ISP_CROP_START(IMX415_PIXEL_ARRAY_WIDTH,
+				      IMX415_ISP_CROP_WIDTH);
+	sel->r.top = IMX415_PIXEL_ARRAY_TOP +
+		IMX415_ISP_CROP_START(IMX415_PIXEL_ARRAY_HEIGHT,
+				      IMX415_ISP_CROP_HEIGHT);
+	sel->r.width = IMX415_ISP_CROP_WIDTH;
+	sel->r.height = IMX415_ISP_CROP_HEIGHT;
 
-	return -EINVAL;
+	return 0;
 }
 
 static int imx415_get_mbus_config(struct v4l2_subdev *sd, unsigned int pad,

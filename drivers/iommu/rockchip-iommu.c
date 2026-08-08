@@ -12,6 +12,7 @@
 #include <linux/device.h>
 #include <linux/dma-mapping.h>
 #include <linux/errno.h>
+#include <linux/export.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/iommu.h>
@@ -26,6 +27,7 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/string_choices.h>
+#include <soc/rockchip/rockchip_iommu.h>
 
 #include "iommu-pages.h"
 
@@ -958,6 +960,28 @@ out_disable_clocks:
 	clk_bulk_disable(iommu->num_clocks, iommu->clocks);
 	return ret;
 }
+
+/**
+ * rockchip_iommu_refresh() - restore an IOMMU after its master was reset
+ * @dev: master device attached to the Rockchip IOMMU
+ *
+ * Some Rockchip multimedia reset lines also reset the IOMMU registers.  The
+ * generic IOMMU core does not observe a reset initiated by the master driver,
+ * so restore the directory table, interrupt mask and paging state explicitly.
+ * The master and its IOMMU must be runtime-active when this function is called.
+ */
+int rockchip_iommu_refresh(struct device *dev)
+{
+	struct rk_iommu *iommu = rk_iommu_from_dev(dev);
+
+	if (!iommu || !iommu->domain || iommu->domain == &rk_identity_domain)
+		return -ENODEV;
+
+	rk_iommu_disable(iommu);
+
+	return rk_iommu_enable(iommu);
+}
+EXPORT_SYMBOL_GPL(rockchip_iommu_refresh);
 
 static int rk_iommu_identity_attach(struct iommu_domain *identity_domain,
 				    struct device *dev,

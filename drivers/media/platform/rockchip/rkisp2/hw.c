@@ -17,6 +17,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/reset.h>
 #include <media/videobuf2-dma-sg.h>
+#include <soc/rockchip/rockchip_iommu.h>
 
 #include "common.h"
 #include "dev.h"
@@ -1049,6 +1050,15 @@ void rkisp_soft_reset(struct rkisp_hw_dev *dev, bool is_secure)
 	if (dev->unite == ISP_UNITE_TWO)
 		writel(0xffff, dev->base_next_addr + CIF_IRCL);
 	udelay(10);
+
+	/* The RK356x ISP reset also clears its IOMMU programming. */
+	if (dev->is_mmu) {
+		int ret = rockchip_iommu_refresh(dev->dev);
+
+		if (ret)
+			dev_warn(dev->dev,
+				 "failed to refresh IOMMU after reset: %d\n", ret);
+	}
 
 	writel(iccl0, base + CIF_ICCL);
 	writel(clk_ctrl0, base + CTRL_VI_ISP_CLK_CTRL);
