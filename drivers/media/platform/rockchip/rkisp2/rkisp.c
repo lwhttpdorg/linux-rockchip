@@ -4463,7 +4463,7 @@ int rkisp_register_isp_subdev(struct rkisp_device *isp_dev,
 	v4l2_subdev_init(sd, &rkisp_isp_sd_ops);
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_HAS_EVENTS;
 	sd->entity.ops = &rkisp_isp_sd_media_ops;
-	sd->entity.function = MEDIA_ENT_F_V4L2_SUBDEV_UNKNOWN;
+	sd->entity.function = MEDIA_ENT_F_PROC_VIDEO_ISP;
 	snprintf(sd->name, sizeof(sd->name), ISP_SUBDEV_NAME);
 
 	isp_sdev->pads[RKISP_ISP_PAD_SINK].flags =

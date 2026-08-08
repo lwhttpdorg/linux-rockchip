@@ -1190,7 +1190,7 @@ static int rockchip_csi2_dphy_probe(struct platform_device *pdev)
 
 	ret = rockchip_csi2_dphy_get_hw(csi2dphy);
 	if (ret)
-		return -EINVAL;
+		return ret;
 	if (csi2dphy->drv_data->chip_id == CHIP_ID_RK3568 ||
 	    csi2dphy->drv_data->chip_id == CHIP_ID_RV1106) {
 		csi2dphy->csi_info.csi_num = 1;
@@ -1221,7 +1221,7 @@ static int rockchip_csi2_dphy_probe(struct platform_device *pdev)
 
 detach_hw:
 	mutex_destroy(&csi2dphy->mutex);
-	return -EINVAL;
+	return ret;
 }
 
 static void rockchip_csi2_dphy_remove(struct platform_device *pdev)

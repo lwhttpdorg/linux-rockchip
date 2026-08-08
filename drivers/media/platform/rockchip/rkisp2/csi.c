@@ -732,7 +732,7 @@ int rkisp_register_csi_subdev(struct rkisp_device *dev,
 	v4l2_subdev_init(sd, &rkisp_csi_ops);
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	sd->entity.ops = &rkisp_csi_media_ops;
-	sd->entity.function = MEDIA_ENT_F_V4L2_SUBDEV_UNKNOWN;
+	sd->entity.function = MEDIA_ENT_F_VID_IF_BRIDGE;
 	snprintf(sd->name, sizeof(sd->name), CSI_DEV_NAME);
 
 	csi_dev->pads[CSI_SINK].flags =

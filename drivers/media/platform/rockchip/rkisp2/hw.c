@@ -1279,13 +1279,17 @@ static int rkisp_hw_probe(struct platform_device *pdev)
 		ret = -EINVAL;
 		goto err;
 	}
-	hw_dev->base_addr = devm_ioremap_resource(dev, res);
-	if (PTR_ERR(hw_dev->base_addr) == -EBUSY) {
-		resource_size_t offset = res->start;
-		resource_size_t size = resource_size(res);
-
-		hw_dev->base_addr = devm_ioremap(dev, offset, size);
-	}
+	/*
+	 * The RK356x ISP register window contains the separately managed ISP
+	 * IOMMU registers.  Map the shared window without claiming it as an
+	 * exclusive resource; otherwise devm_ioremap_resource() emits a
+	 * misleading -EBUSY error after the IOMMU driver has claimed its range.
+	 */
+	if (match_data->isp_ver == ISP_V21)
+		hw_dev->base_addr = devm_ioremap(dev, res->start,
+						  resource_size(res));
+	else
+		hw_dev->base_addr = devm_ioremap_resource(dev, res);
 	if (IS_ERR(hw_dev->base_addr)) {
 		dev_err(dev, "ioremap failed\n");
 		ret = PTR_ERR(hw_dev->base_addr);
