@@ -446,6 +446,7 @@ static int rkvdec_h264_run(struct rkvdec_ctx *ctx)
 	lookup_ref_buf_idx(ctx, &run);
 	assemble_hw_rps(&reflist_builder, &run, &h264_ctx->reflists, &tbl->rps);
 
+	rkvdec_vdpu34x_h264_workaround(ctx);
 	config_registers(ctx, &run);
 
 	rkvdec_run_postamble(ctx, &run.base);

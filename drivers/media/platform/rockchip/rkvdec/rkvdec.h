@@ -25,7 +25,8 @@
 #include <media/videobuf2-core.h>
 #include <media/videobuf2-dma-contig.h>
 
-#define RKVDEC_QUIRK_DISABLE_QOS	BIT(0)
+#define RKVDEC_QUIRK_DISABLE_QOS		BIT(0)
+#define RKVDEC_QUIRK_VDPU34X_H264_CABAC	BIT(1)
 
 #define RKVDEC_1080P_PIXELS		(1920 * 1088)
 #define RKVDEC_4K_PIXELS		(4096 * 2304)
@@ -138,10 +139,14 @@ struct rkvdec_core {
 	struct clk *axi_clk;
 	void __iomem *regs;
 	void __iomem *link;
+	void __iomem *cache;
 	struct delayed_work watchdog_work;
 	struct gen_pool *sram_pool;
 	struct iommu_domain *empty_domain;
 	struct rkvdec_rcb_config *rcb_config;
+	void *workaround_cpu;
+	dma_addr_t workaround_dma;
+	size_t workaround_size;
 	struct rkvdec_ctx *curr_ctx;
 	int irq;
 	int id;
@@ -218,6 +223,9 @@ extern const struct rkvdec_coded_fmt_ops rkvdec_vp9_fmt_ops;
 extern const struct rkvdec_coded_fmt_ops rkvdec_vdpu381_h264_fmt_ops;
 extern const struct rkvdec_coded_fmt_ops rkvdec_vdpu381_hevc_fmt_ops;
 extern const struct rkvdec_coded_fmt_ops rkvdec_vdpu381_vp9_fmt_ops;
+
+int rkvdec_vdpu34x_workaround_init(struct rkvdec_core *core);
+void rkvdec_vdpu34x_h264_workaround(struct rkvdec_ctx *ctx);
 
 /* VDPU383 ops */
 extern const struct rkvdec_coded_fmt_ops rkvdec_vdpu383_h264_fmt_ops;

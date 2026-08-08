@@ -302,6 +302,14 @@
 	};
 };
 
+&rkvdec {
+	status = "okay";
+};
+
+&rkvdec_mmu {
+	status = "okay";
+};
+
 &vicap {
 	status = "disabled";
 };

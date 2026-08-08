@@ -604,6 +604,58 @@ static const struct rkvdec_coded_fmt_desc vdpu381_coded_fmts[] = {
 	},
 };
 
+/* RK3566/RK3568 VDPU34x shares the codec register layout with VDPU381. */
+static const struct rkvdec_coded_fmt_desc vdpu34x_coded_fmts[] = {
+	{
+		.fourcc = V4L2_PIX_FMT_HEVC_SLICE,
+		.frmsize = {
+			.min_width = 64,
+			.max_width = 4096,
+			.step_width = 64,
+			.min_height = 64,
+			.max_height = 2304,
+			.step_height = 16,
+		},
+		.ctrls = &vdpu38x_hevc_ctrls,
+		.ops = &rkvdec_vdpu381_hevc_fmt_ops,
+		.num_decoded_fmts = ARRAY_SIZE(rkvdec_hevc_decoded_fmts),
+		.decoded_fmts = rkvdec_hevc_decoded_fmts,
+		.subsystem_flags = VB2_V4L2_FL_SUPPORTS_M2M_HOLD_CAPTURE_BUF,
+	},
+	{
+		.fourcc = V4L2_PIX_FMT_H264_SLICE,
+		.frmsize = {
+			.min_width = 64,
+			.max_width = 4096,
+			.step_width = 64,
+			.min_height = 64,
+			.max_height = 2304,
+			.step_height = 16,
+		},
+		.ctrls = &rkvdec_h264_ctrls,
+		.ops = &rkvdec_vdpu381_h264_fmt_ops,
+		.num_decoded_fmts = ARRAY_SIZE(rkvdec_h264_decoded_fmts),
+		.decoded_fmts = rkvdec_h264_decoded_fmts,
+		.subsystem_flags = VB2_V4L2_FL_SUPPORTS_M2M_HOLD_CAPTURE_BUF,
+	},
+	{
+		.fourcc = V4L2_PIX_FMT_VP9_FRAME,
+		.frmsize = {
+			.min_width = 64,
+			.max_width = 4096,
+			.step_width = 64,
+			.min_height = 64,
+			.max_height = 2304,
+			.step_height = 64,
+		},
+		.ctrls = &vdpu381_vp9_ctrls,
+		.ops = &rkvdec_vdpu381_vp9_fmt_ops,
+		.num_decoded_fmts = ARRAY_SIZE(vdpu381_vp9_decoded_fmts),
+		.decoded_fmts = vdpu381_vp9_decoded_fmts,
+		.subsystem_flags = VB2_V4L2_FL_SUPPORTS_M2M_HOLD_CAPTURE_BUF,
+	},
+};
+
 static const struct rkvdec_coded_fmt_desc vdpu383_coded_fmts[] = {
 	{
 		.fourcc = V4L2_PIX_FMT_HEVC_SLICE,
@@ -1936,6 +1988,16 @@ static const struct rkvdec_variant_ops vdpu381_variant_ops = {
 	.flatten_matrices = transpose_and_flatten_matrices,
 };
 
+static const struct rkvdec_variant vdpu34x_variant = {
+	.coded_fmts = vdpu34x_coded_fmts,
+	.num_coded_fmts = ARRAY_SIZE(vdpu34x_coded_fmts),
+	.rcb_sizes = vdpu381_rcb_sizes,
+	.num_rcb_sizes = ARRAY_SIZE(vdpu381_rcb_sizes),
+	.ops = &vdpu381_variant_ops,
+	.skip_iommu_restore = true,
+	.quirks = RKVDEC_QUIRK_VDPU34X_H264_CABAC,
+};
+
 static const struct rkvdec_variant vdpu381_variant = {
 	.coded_fmts = vdpu381_coded_fmts,
 	.num_coded_fmts = ARRAY_SIZE(vdpu381_coded_fmts),
@@ -1984,6 +2046,10 @@ static const struct of_device_id of_rkvdec_match[] = {
 	{
 		.compatible = "rockchip,rk3399-vdec",
 		.data = &rk3399_rkvdec_variant,
+	},
+	{
+		.compatible = "rockchip,rk3568-vdec",
+		.data = &vdpu34x_variant,
 	},
 	{
 		.compatible = "rockchip,rk3588-vdec",
@@ -2113,6 +2179,12 @@ static int rkvdec_probe(struct platform_device *pdev)
 			ret = PTR_ERR(core->link);
 			goto err_remove_core;
 		}
+
+		core->cache = devm_platform_ioremap_resource_byname(pdev, "cache");
+		if (IS_ERR(core->cache)) {
+			ret = PTR_ERR(core->cache);
+			goto err_remove_core;
+		}
 	}
 
 	domain = iommu_get_domain_for_dev(core->dev);
@@ -2148,6 +2220,12 @@ static int rkvdec_probe(struct platform_device *pdev)
 	}
 
 	vb2_dma_contig_set_max_seg_size(&pdev->dev, DMA_BIT_MASK(32));
+
+	if (rkvdec->variant->quirks & RKVDEC_QUIRK_VDPU34X_H264_CABAC) {
+		ret = rkvdec_vdpu34x_workaround_init(core);
+		if (ret)
+			goto err_remove_core;
+	}
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq <= 0) {
