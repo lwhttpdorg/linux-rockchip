@@ -134,6 +134,14 @@
 	};
 };
 
+/* Match Radxa Zero 3W: vary the green LED blink rate with CPU load. */
+&sys_led {
+	color = <LED_COLOR_ID_GREEN>;
+	default-state = "off";
+	function = LED_FUNCTION_ACTIVITY;
+	linux,default-trigger = "activity";
+};
+
 &combphy1 {
 	status = "disabled";
 };
