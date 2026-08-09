@@ -22,6 +22,7 @@
 	aliases {
 		ethernet0 = &r8125_u10;
 		ethernet1 = &r8125_u12;
+		i2c9 = &header_i2c9;
 		mmc0 = &sdhci;
 		mmc1 = &sdmmc;
 	};
@@ -73,6 +74,20 @@
 		gpios = <&gpio0 RK_PD4 GPIO_ACTIVE_LOW>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&ir_receiver_pin>;
+	};
+
+	/* Second 40-pin I2C bus: pin 15 SDA, pin 26 SCL. */
+	header_i2c9: i2c-9 {
+		compatible = "i2c-gpio";
+		sda-gpios = <&gpio1 RK_PA7
+			     (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		scl-gpios = <&gpio1 RK_PB0
+			     (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		i2c-gpio,delay-us = <5>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&header_i2c9_pins>;
+		#address-cells = <1>;
+		#size-cells = <0>;
 	};
 
 	leds {
@@ -523,14 +538,17 @@
 
 &i2c3 {
 	pinctrl-0 = <&i2c3m0_xfer>;
+	status = "okay";
 };
 
 &i2c4 {
 	pinctrl-0 = <&i2c4m3_xfer>;
+	status = "okay";
 };
 
 &i2c5 {
 	pinctrl-0 = <&i2c5m0_xfer>;
+	status = "okay";
 };
 
 &i2c6 {
@@ -638,8 +656,16 @@
 	/* connected with MIPI-CSI1 */
 };
 
+&i2c7 {
+	pinctrl-0 = <&i2c7m0_xfer>;
+	status = "okay";
+};
+
 &i2c8 {
+	clock-frequency = <400000>;
+	pinctrl-names = "default";
 	pinctrl-0 = <&i2c8m2_xfer>;
+	status = "okay";
 };
 
 &i2s0_8ch {
@@ -833,6 +859,14 @@
 		};
 	};
 
+	header-i2c9 {
+		header_i2c9_pins: header-i2c9-pins {
+			rockchip,pins =
+				<1 RK_PA7 RK_FUNC_GPIO &pcfg_pull_none>,
+				<1 RK_PB0 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
 	sdmmc {
 		sd_s0_pwr: sd-s0-pwr {
 			rockchip,pins = <4 RK_PA5 RK_FUNC_GPIO &pcfg_pull_down>;
@@ -897,6 +931,16 @@
 
 &pwm9 {
 	pinctrl-0 = <&pwm9m0_pins>;
+	status = "okay";
+};
+
+&pwm14 {
+	pinctrl-0 = <&pwm14m0_pins>;
+	status = "okay";
+};
+
+&pwm15 {
+	pinctrl-0 = <&pwm15m0_pins>;
 	status = "okay";
 };
 
@@ -980,22 +1024,39 @@
 };
 
 &spi0 {
-	num-cs = <1>;
-	pinctrl-0 = <&spi0m2_cs0 &spi0m2_pins>;
-	status = "disabled";
+	num-cs = <2>;
+	pinctrl-0 = <&spi0m2_cs0 &spi0m2_cs1 &spi0m2_pins>;
+	status = "okay";
 
 	spidev0: spidev@0 {
-		compatible = "rockchip,spidev";
+		compatible = "rohm,dh2228fv";
 		reg = <0>;
-		spi-max-frequency = <5000000>;
-		status = "disabled";
+		spi-max-frequency = <24000000>;
+	};
+
+	spidev1: spidev@1 {
+		compatible = "rohm,dh2228fv";
+		reg = <1>;
+		spi-max-frequency = <24000000>;
 	};
 };
 
 &spi4 {
-	num-cs = <1>;
-	pinctrl-0 = <&spi4m1_cs0 &spi4m1_pins>;
-	status = "disabled";
+	num-cs = <2>;
+	pinctrl-0 = <&spi4m1_cs0 &spi4m1_cs1 &spi4m1_pins>;
+	status = "okay";
+
+	spidev@0 {
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <24000000>;
+	};
+
+	spidev@1 {
+		compatible = "rohm,dh2228fv";
+		reg = <1>;
+		spi-max-frequency = <24000000>;
+	};
 };
 
 &spi2 {
@@ -1409,7 +1470,7 @@
 
 &uart0 {
 	pinctrl-0 = <&uart0m0_xfer>;
-	status = "disabled";
+	status = "okay";
 };
 
 &uart3 {
