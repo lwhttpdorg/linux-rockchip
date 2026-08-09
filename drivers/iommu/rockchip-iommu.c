@@ -72,6 +72,9 @@
 #define RK_MMU_IRQ_BUS_ERROR     0x02  /* bus read error */
 #define RK_MMU_IRQ_MASK          (RK_MMU_IRQ_PAGE_FAULT | RK_MMU_IRQ_BUS_ERROR)
 
+/* RK356x IOMMUs may otherwise time out while fetching a directory entry. */
+#define RK_MMU_DISABLE_FETCH_DTE_TIME_LIMIT	BIT(31)
+
 #define NUM_DT_ENTRIES 1024
 #define NUM_PT_ENTRIES 1024
 
@@ -91,6 +94,7 @@ struct rk_iommu_domain {
 	spinlock_t iommus_lock; /* lock for iommus list */
 	spinlock_t dt_lock; /* lock for modifying page directory table */
 	struct device *dma_dev;
+	gfp_t table_gfp_flags;
 
 	struct iommu_domain domain;
 };
@@ -732,7 +736,7 @@ static u32 *rk_dte_get_page_table(struct rk_iommu_domain *rk_domain,
 	if (rk_dte_is_pt_valid(dte))
 		goto done;
 
-	page_table = iommu_alloc_pages_sz(GFP_ATOMIC | rk_ops->gfp_flags,
+	page_table = iommu_alloc_pages_sz(GFP_ATOMIC | rk_domain->table_gfp_flags,
 					  SPAGE_SIZE);
 	if (!page_table)
 		return ERR_PTR(-ENOMEM);
@@ -932,6 +936,7 @@ static int rk_iommu_enable(struct rk_iommu *iommu)
 	struct iommu_domain *domain = iommu->domain;
 	struct rk_iommu_domain *rk_domain = to_rk_domain(domain);
 	int ret, i;
+	u32 auto_gate;
 
 	ret = clk_bulk_enable(iommu->num_clocks, iommu->clocks);
 	if (ret)
@@ -950,6 +955,21 @@ static int rk_iommu_enable(struct rk_iommu *iommu)
 			       rk_ops->mk_dtentries(rk_domain->dt_dma));
 		rk_iommu_base_command(iommu->bases[i], RK_MMU_CMD_ZAP_CACHE);
 		rk_iommu_write(iommu->bases[i], RK_MMU_INT_MASK, RK_MMU_IRQ_MASK);
+
+		/*
+		 * An RK356x shared multimedia reset clears AUTO_GATING along with
+		 * the page-table registers.  Without restoring bit 31 the IOMMU
+		 * can time out fetching the first DTE and report a BUS_ERROR at
+		 * IOVA 0.  These IOMMUs use disable-mmu-reset because their reset
+		 * line is shared with the master; keep the workaround scoped to
+		 * that hardware so unrelated Rockchip IOMMUs are unchanged.
+		 */
+		if (iommu->reset_disabled) {
+			auto_gate = rk_iommu_read(iommu->bases[i], RK_MMU_AUTO_GATING);
+			auto_gate |= RK_MMU_DISABLE_FETCH_DTE_TIME_LIMIT;
+			rk_iommu_write(iommu->bases[i], RK_MMU_AUTO_GATING,
+				       auto_gate);
+		}
 	}
 
 	ret = rk_iommu_enable_paging(iommu);
@@ -1092,18 +1112,29 @@ static struct iommu_domain *rk_iommu_domain_alloc_paging(struct device *dev)
 	if (!rk_domain)
 		return NULL;
 
+	iommu = rk_iommu_from_dev(dev);
+	rk_domain->dma_dev = iommu->dev;
+	rk_domain->table_gfp_flags = rk_ops->gfp_flags;
+	/*
+	 * RK356x multimedia IOMMUs share their reset with the master and
+	 * cannot reliably fetch page tables from the high memory window.
+	 * The BSP keeps both levels below 4 GiB for these instances.  Do the
+	 * same without restricting normal v2 IOMMUs, including RK3588.
+	 */
+	if (iommu->reset_disabled)
+		rk_domain->table_gfp_flags |= GFP_DMA32;
+
 	/*
 	 * rk32xx iommus use a 2 level pagetable.
 	 * Each level1 (dt) and level2 (pt) table has 1024 4-byte entries.
 	 * Allocate one 4 KiB page for each table.
 	 */
-	rk_domain->dt = iommu_alloc_pages_sz(GFP_KERNEL | rk_ops->gfp_flags,
+	rk_domain->dt = iommu_alloc_pages_sz(GFP_KERNEL |
+					    rk_domain->table_gfp_flags,
 					     SPAGE_SIZE);
 	if (!rk_domain->dt)
 		goto err_free_domain;
 
-	iommu = rk_iommu_from_dev(dev);
-	rk_domain->dma_dev = iommu->dev;
 	rk_domain->dt_dma = dma_map_single(rk_domain->dma_dev, rk_domain->dt,
 					   SPAGE_SIZE, DMA_TO_DEVICE);
 	if (dma_mapping_error(rk_domain->dma_dev, rk_domain->dt_dma)) {
