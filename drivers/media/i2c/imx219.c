@@ -15,13 +15,18 @@
  */
 
 #include <linux/clk.h>
+#include <linux/compat.h>
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/minmax.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
+#include <linux/property.h>
 #include <linux/regulator/consumer.h>
+#include <linux/rk-camera-module.h>
+#include <linux/slab.h>
+#include <linux/uaccess.h>
 
 #include <media/v4l2-cci.h>
 #include <media/v4l2-ctrls.h>
@@ -32,6 +37,7 @@
 /* Chip ID */
 #define IMX219_REG_CHIP_ID		CCI_REG16(0x0000)
 #define IMX219_CHIP_ID			0x0219
+#define IMX219_NAME			"imx219"
 
 #define IMX219_REG_MODE_SELECT		CCI_REG8(0x0100)
 #define IMX219_MODE_STANDBY		0x00
@@ -358,6 +364,12 @@ struct imx219 {
 
 	/* Two or Four lanes */
 	u8 lanes;
+
+	bool has_module_info;
+	u32 module_index;
+	const char *module_facing;
+	const char *module_name;
+	const char *lens_name;
 };
 
 static inline struct imx219 *to_imx219(struct v4l2_subdev *_sd)
@@ -994,6 +1006,64 @@ static int imx219_init_state(struct v4l2_subdev *sd,
 	return imx219_set_pad_format(sd, state, &fmt);
 }
 
+static void imx219_get_module_info(struct imx219 *imx219,
+				   struct rkmodule_inf *info)
+{
+	memset(info, 0, sizeof(*info));
+	strscpy(info->base.sensor, IMX219_NAME, sizeof(info->base.sensor));
+
+	if (!imx219->has_module_info)
+		return;
+
+	strscpy(info->base.module, imx219->module_name,
+		sizeof(info->base.module));
+	strscpy(info->base.lens, imx219->lens_name, sizeof(info->base.lens));
+}
+
+static long imx219_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
+{
+	struct imx219 *imx219 = to_imx219(sd);
+
+	switch (cmd) {
+	case RKMODULE_GET_MODULE_INFO:
+		imx219_get_module_info(imx219, arg);
+		return 0;
+	default:
+		return -ENOIOCTLCMD;
+	}
+}
+
+#ifdef CONFIG_COMPAT
+static long imx219_compat_ioctl32(struct v4l2_subdev *sd,
+				  unsigned int cmd, unsigned long arg)
+{
+	void __user *up = compat_ptr(arg);
+	struct rkmodule_inf *info;
+	long ret;
+
+	if (cmd != RKMODULE_GET_MODULE_INFO)
+		return -ENOIOCTLCMD;
+
+	info = kzalloc_obj(*info, GFP_KERNEL);
+	if (!info)
+		return -ENOMEM;
+
+	ret = imx219_ioctl(sd, cmd, info);
+	if (!ret && copy_to_user(up, info, sizeof(*info)))
+		ret = -EFAULT;
+
+	kfree(info);
+	return ret;
+}
+#endif
+
+static const struct v4l2_subdev_core_ops imx219_core_ops = {
+	.ioctl = imx219_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl32 = imx219_compat_ioctl32,
+#endif
+};
+
 static const struct v4l2_subdev_video_ops imx219_video_ops = {
 	.s_stream = v4l2_subdev_s_stream_helper,
 };
@@ -1009,6 +1079,7 @@ static const struct v4l2_subdev_pad_ops imx219_pad_ops = {
 };
 
 static const struct v4l2_subdev_ops imx219_subdev_ops = {
+	.core = &imx219_core_ops,
 	.video = &imx219_video_ops,
 	.pad = &imx219_pad_ops,
 };
@@ -1177,6 +1248,61 @@ error_out:
 	return ret;
 }
 
+static int imx219_parse_module_info(struct device *dev, struct imx219 *imx219)
+{
+	unsigned int count = 0;
+	int ret;
+
+	count += device_property_present(dev, RKMODULE_CAMERA_MODULE_INDEX);
+	count += device_property_present(dev, RKMODULE_CAMERA_MODULE_FACING);
+	count += device_property_present(dev, RKMODULE_CAMERA_MODULE_NAME);
+	count += device_property_present(dev, RKMODULE_CAMERA_LENS_NAME);
+
+	if (!count)
+		return 0;
+
+	if (count != 4)
+		return dev_err_probe(dev, -EINVAL,
+				     "incomplete Rockchip camera module information\n");
+
+	ret = device_property_read_u32(dev, RKMODULE_CAMERA_MODULE_INDEX,
+				       &imx219->module_index);
+	ret |= device_property_read_string(dev, RKMODULE_CAMERA_MODULE_FACING,
+					   &imx219->module_facing);
+	ret |= device_property_read_string(dev, RKMODULE_CAMERA_MODULE_NAME,
+					   &imx219->module_name);
+	ret |= device_property_read_string(dev, RKMODULE_CAMERA_LENS_NAME,
+					   &imx219->lens_name);
+	if (ret)
+		return dev_err_probe(dev, -EINVAL,
+				     "invalid Rockchip camera module information\n");
+
+	if (imx219->module_index > 99)
+		return dev_err_probe(dev, -ERANGE,
+				     "camera module index must be between 0 and 99\n");
+
+	if (strlen(imx219->module_name) >= RKMODULE_NAME_LEN ||
+	    strlen(imx219->lens_name) >= RKMODULE_NAME_LEN)
+		return dev_err_probe(dev, -E2BIG,
+				     "camera module and lens names must be shorter than %d characters\n",
+				     RKMODULE_NAME_LEN);
+
+	if (!imx219->module_name[0] || !imx219->lens_name[0])
+		return dev_err_probe(dev, -EINVAL,
+				     "camera module and lens names must not be empty\n");
+
+	if (!strcmp(imx219->module_facing, "back"))
+		imx219->module_facing = "b";
+	else if (!strcmp(imx219->module_facing, "front"))
+		imx219->module_facing = "f";
+	else
+		return dev_err_probe(dev, -EINVAL,
+				     "camera module facing must be front or back\n");
+
+	imx219->has_module_info = true;
+	return 0;
+}
+
 static int imx219_probe(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
@@ -1189,6 +1315,15 @@ static int imx219_probe(struct i2c_client *client)
 
 	v4l2_i2c_subdev_init(&imx219->sd, client, &imx219_subdev_ops);
 	imx219->sd.internal_ops = &imx219_internal_ops;
+
+	ret = imx219_parse_module_info(dev, imx219);
+	if (ret)
+		return ret;
+
+	if (imx219->has_module_info)
+		snprintf(imx219->sd.name, sizeof(imx219->sd.name),
+			 "m%02u_%c_%s %s", imx219->module_index,
+			 imx219->module_facing[0], IMX219_NAME, dev_name(dev));
 
 	/* Check the hardware configuration in device tree */
 	if (imx219_check_hwcfg(dev, imx219))
