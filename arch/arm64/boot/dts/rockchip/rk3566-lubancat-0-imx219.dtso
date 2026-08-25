@@ -71,6 +71,11 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&cam_reset>;
 		reset-gpios = <&gpio0 RK_PC4 GPIO_ACTIVE_HIGH>;
+		rockchip,camera-module-index = <0>;
+		rockchip,camera-module-facing = "back";
+		rockchip,camera-module-name = "rpi-camera-v2";
+		rockchip,camera-module-lens-name = "default";
+
 		port {
 			imx219_out: endpoint {
 				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;

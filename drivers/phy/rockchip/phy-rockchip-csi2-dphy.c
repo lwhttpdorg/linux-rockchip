@@ -450,24 +450,6 @@ static int csi2_dphy_update_config(struct v4l2_subdev *sd)
 	if (!sensor)
 		return -ENODEV;
 
-	/*
-	 * RK3568 selects split mode from the D-PHY alias at probe time.  A
-	 * four-lane endpoint must use the full PHY even when the board also uses
-	 * that logical D-PHY node for a two-lane camera through an overlay.
-	 */
-	if (dphy->drv_data->chip_id == CHIP_ID_RK3568 &&
-	    sensor->mbus.type == V4L2_MBUS_CSI2_DPHY && sensor->lanes == 4) {
-		if (dphy->phy_index % 3 == 2) {
-			dev_err(dphy->dev,
-				"dphy%d only supports split lanes 2/3\n",
-				dphy->phy_index);
-			return -EINVAL;
-		}
-
-		dphy->lane_mode = PHY_FULL_MODE;
-		dphy->dphy_hw->lane_mode = LANE_MODE_FULL;
-	}
-
 	for (i = 0; i < dphy->csi_info.csi_num; i++) {
 		if (dphy->drv_data->chip_id != CHIP_ID_RK3568 &&
 		    dphy->drv_data->chip_id != CHIP_ID_RV1106) {
@@ -1151,6 +1133,47 @@ static int rockchip_csi2_dphy_get_hw(struct csi2_dphy *dphy)
 	return ret;
 }
 
+static int rockchip_csi2_dphy_select_phy_index(struct csi2_dphy *dphy)
+{
+	struct v4l2_fwnode_endpoint vep = {
+		.bus_type = V4L2_MBUS_CSI2_DPHY,
+	};
+	struct fwnode_handle *ep;
+	unsigned int lanes;
+	int ret;
+
+	if (dphy->drv_data->chip_id != CHIP_ID_RK3568)
+		return 0;
+
+	ep = fwnode_graph_get_endpoint_by_id(dev_fwnode(dphy->dev), 0, 0, 0);
+	if (!ep)
+		return 0;
+
+	ret = v4l2_fwnode_endpoint_parse(ep, &vep);
+	fwnode_handle_put(ep);
+	if (ret) {
+		v4l2_fwnode_endpoint_free(&vep);
+		return dev_err_probe(dphy->dev, ret,
+				     "failed to parse sink endpoint\n");
+	}
+
+	lanes = vep.bus.mipi_csi2.num_data_lanes;
+	v4l2_fwnode_endpoint_free(&vep);
+
+	if (lanes != 4)
+		return 0;
+
+	if (dphy->phy_index % 3 == 2)
+		return dev_err_probe(dphy->dev, -EINVAL,
+				     "dphy%d cannot receive four lanes\n",
+				     dphy->phy_index);
+
+	/* Select the full PHY before attaching to the shared D-PHY hardware. */
+	dphy->phy_index -= dphy->phy_index % 3;
+
+	return 0;
+}
+
 static int rockchip_csi2_dphy_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -1174,6 +1197,10 @@ static int rockchip_csi2_dphy_probe(struct platform_device *pdev)
 	csi2dphy->phy_index = of_alias_get_id(dev->of_node, drv_data->dev_name);
 	if (csi2dphy->phy_index < 0 || csi2dphy->phy_index >= PHY_MAX)
 		csi2dphy->phy_index = 0;
+
+	ret = rockchip_csi2_dphy_select_phy_index(csi2dphy);
+	if (ret)
+		return ret;
 
 	ret = rockchip_csi2_dphy_get_hw(csi2dphy);
 	if (ret)
