@@ -432,38 +432,6 @@ static int rockchip_csi2_dphy_detach_hw(struct csi2_dphy *dphy, int csi_idx, int
 	return 0;
 }
 
-static int csi2_dphy_update_sensor_mbus(struct v4l2_subdev *sd)
-{
-	struct csi2_dphy *dphy = to_csi2_dphy(sd);
-	struct v4l2_subdev *sensor_sd = get_remote_sensor(sd);
-	struct csi2_sensor *sensor;
-	struct v4l2_mbus_config mbus;
-	int ret = 0;
-
-	if (!sensor_sd)
-		return -ENODEV;
-	sensor = sd_to_sensor(dphy, sensor_sd);
-	if (!sensor)
-		return -ENODEV;
-
-	ret = v4l2_subdev_call(sensor_sd, pad, get_mbus_config, 0, &mbus);
-	if (ret) {
-		dev_err(dphy->dev, "%s get_mbus_config fail, pls check it\n",
-			sensor_sd->name);
-		return ret;
-	}
-
-	sensor->mbus = mbus;
-
-	if (mbus.type == V4L2_MBUS_CSI2_DPHY ||
-	    mbus.type == V4L2_MBUS_CSI2_CPHY)
-		sensor->lanes = mbus.bus.mipi_csi2.num_data_lanes;
-	else if (mbus.type == V4L2_MBUS_CCP2)
-		sensor->lanes = mbus.bus.mipi_csi1.data_lane;
-
-	return 0;
-}
-
 static int csi2_dphy_update_config(struct v4l2_subdev *sd)
 {
 	struct csi2_dphy *dphy = to_csi2_dphy(sd);
@@ -526,11 +494,6 @@ static int csi2_dphy_s_stream_start(struct v4l2_subdev *sd)
 {
 	struct csi2_dphy *dphy = to_csi2_dphy(sd);
 	int i = 0;
-	int ret = 0;
-
-	ret = csi2_dphy_update_sensor_mbus(sd);
-	if (ret < 0)
-		return ret;
 
 	for (i = 0; i < dphy->csi_info.csi_num; i++) {
 		if (dphy->csi_info.dphy_vendor[i] == PHY_VENDOR_SAMSUNG) {
@@ -640,7 +603,6 @@ static int csi2_dphy_s_stream(struct v4l2_subdev *sd, int on)
 			return ret;
 		}
 
-		csi2_dphy_update_sensor_mbus(sd);
 		ret = csi2_dphy_update_config(sd);
 		if (ret < 0) {
 			mutex_unlock(&dphy->mutex);
@@ -689,17 +651,15 @@ static int csi2_dphy_g_mbus_config(struct v4l2_subdev *sd,
 	struct csi2_dphy *dphy = to_csi2_dphy(sd);
 	struct v4l2_subdev *sensor_sd = get_remote_sensor(sd);
 	struct csi2_sensor *sensor;
-	int ret = 0;
 
 	if (!sensor_sd)
 		return -ENODEV;
 	sensor = sd_to_sensor(dphy, sensor_sd);
 	if (!sensor)
 		return -ENODEV;
-	ret = csi2_dphy_update_sensor_mbus(sd);
 	*config = sensor->mbus;
 
-	return ret;
+	return 0;
 }
 
 static int csi2_dphy_s_power(struct v4l2_subdev *sd, int on)
@@ -976,11 +936,12 @@ static int rockchip_csi2_dphy_fwnode_parse(struct csi2_dphy *dphy)
 		if (vep.bus_type == V4L2_MBUS_CSI2_DPHY ||
 		    vep.bus_type == V4L2_MBUS_CSI2_CPHY) {
 			config->type = vep.bus_type;
-			config->bus.mipi_csi2.flags = vep.bus.mipi_csi2.flags;
+			config->bus.mipi_csi2 = vep.bus.mipi_csi2;
 			s_asd->lanes = vep.bus.mipi_csi2.num_data_lanes;
 		} else if (vep.bus_type == V4L2_MBUS_CCP2) {
 			/* V4L2_MBUS_CCP2 for lvds */
 			config->type = V4L2_MBUS_CCP2;
+			config->bus.mipi_csi1 = vep.bus.mipi_csi1;
 			s_asd->lanes = vep.bus.mipi_csi1.data_lane;
 		} else {
 			dev_err(dev, "Only CSI2 and CCP2 bus type is currently supported\n");

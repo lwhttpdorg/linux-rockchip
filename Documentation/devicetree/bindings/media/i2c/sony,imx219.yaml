@@ -48,33 +48,6 @@ properties:
       Reference to the GPIO connected to the xclr pin, if any.
       Must be released (set high) after all supplies are applied.
 
-  rockchip,camera-module-index:
-    $ref: /schemas/types.yaml#/definitions/uint32
-    description:
-      Zero-based camera module index used by the Rockchip camera stack.
-    maximum: 99
-
-  rockchip,camera-module-facing:
-    $ref: /schemas/types.yaml#/definitions/string
-    description: Physical direction in which the camera module faces.
-    enum:
-      - back
-      - front
-
-  rockchip,camera-module-name:
-    $ref: /schemas/types.yaml#/definitions/string
-    description:
-      Camera module identifier used to select Rockchip ISP tuning data.
-    minLength: 1
-    maxLength: 31
-
-  rockchip,camera-module-lens-name:
-    $ref: /schemas/types.yaml#/definitions/string
-    description:
-      Lens identifier used to select Rockchip ISP tuning data.
-    minLength: 1
-    maxLength: 31
-
   port:
     $ref: /schemas/graph.yaml#/$defs/port-base
     additionalProperties: false
@@ -108,18 +81,6 @@ required:
   - VDIG-supply
   - VDDL-supply
   - port
-
-dependentRequired:
-  rockchip,camera-module-index:
-    - rockchip,camera-module-facing
-    - rockchip,camera-module-name
-    - rockchip,camera-module-lens-name
-  rockchip,camera-module-facing:
-    - rockchip,camera-module-index
-  rockchip,camera-module-name:
-    - rockchip,camera-module-index
-  rockchip,camera-module-lens-name:
-    - rockchip,camera-module-index
 
 unevaluatedProperties: false
 

@@ -47,7 +47,20 @@
 	status = "disabled";
 };
 
+/*
+ * The LubanCat-to-Raspberry-Pi adapter routes CAM_PWDN to CAM_IO0.
+ * Raspberry Pi Camera Module V2 uses CAM_IO0 as an active-high power enable,
+ * unlike the active-low enable expected by the IMX415 module.
+ */
+&cam_sensor_en {
+	enable-active-high;
+	gpio = <&gpio0 RK_PC3 GPIO_ACTIVE_HIGH>;
+};
+
 &i2c1 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
 	imx219: camera@10 {
 		compatible = "sony,imx219";
 		reg = <0x10>;
@@ -58,11 +71,6 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&cam_reset>;
 		reset-gpios = <&gpio0 RK_PC4 GPIO_ACTIVE_HIGH>;
-		rockchip,camera-module-index = <0>;
-		rockchip,camera-module-facing = "back";
-		rockchip,camera-module-name = "rpi-camera-v2";
-		rockchip,camera-module-lens-name = "default";
-
 		port {
 			imx219_out: endpoint {
 				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;

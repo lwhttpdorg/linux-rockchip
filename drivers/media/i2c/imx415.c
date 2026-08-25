@@ -6,7 +6,6 @@
  */
 
 #include <linux/clk.h>
-#include <linux/compat.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
@@ -14,9 +13,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
-#include <linux/rk-camera-module.h>
 #include <linux/slab.h>
-#include <linux/uaccess.h>
 #include <linux/videodev2.h>
 
 #include <media/v4l2-cci.h>
@@ -28,13 +25,8 @@
 #define IMX415_PIXEL_ARRAY_LEFT	  0
 #define IMX415_PIXEL_ARRAY_WIDTH  3864
 #define IMX415_PIXEL_ARRAY_HEIGHT 2192
-#define IMX415_ISP_CROP_WIDTH	  3840
-#define IMX415_ISP_CROP_HEIGHT	  2160
 #define IMX415_PIXEL_ARRAY_VBLANK 58
 #define IMX415_EXPOSURE_OFFSET	  8
-#define IMX415_NAME		  "imx415"
-
-#define IMX415_ISP_CROP_START(src, dst)	((((src) - (dst)) / 2) & ~3)
 
 #define IMX415_PIXEL_RATE_74_25MHZ	891000000
 #define IMX415_PIXEL_RATE_72MHZ		864000000
@@ -576,13 +568,6 @@ struct imx415 {
 
 	unsigned int cur_mode;
 	unsigned int num_data_lanes;
-	struct v4l2_mbus_config_mipi_csi2 csi2;
-
-	bool has_module_info;
-	u32 module_index;
-	const char *module_facing;
-	const char *module_name;
-	const char *lens_name;
 };
 
 /*
@@ -1060,42 +1045,19 @@ static int imx415_get_selection(struct v4l2_subdev *sd,
 				struct v4l2_subdev_state *sd_state,
 				struct v4l2_subdev_selection *sel)
 {
-	/*
-	 * The sensor outputs its complete 3864x2192 pixel array.  RKISP2.1
-	 * requires Bayer input dimensions aligned to 16 pixels horizontally
-	 * and 8 lines vertically, so let the ISP crop the optical margins to
-	 * the standard 3840x2160 active image.  Rockchip's ISP driver uses
-	 * CROP_BOUNDS to distinguish this ISP-side crop from a crop performed
-	 * by the sensor itself.
-	 */
-	if (sel->target != V4L2_SEL_TGT_CROP_BOUNDS)
-		return -EINVAL;
+	switch (sel->target) {
+	case V4L2_SEL_TGT_CROP:
+	case V4L2_SEL_TGT_CROP_DEFAULT:
+	case V4L2_SEL_TGT_CROP_BOUNDS:
+		sel->r.top = IMX415_PIXEL_ARRAY_TOP;
+		sel->r.left = IMX415_PIXEL_ARRAY_LEFT;
+		sel->r.width = IMX415_PIXEL_ARRAY_WIDTH;
+		sel->r.height = IMX415_PIXEL_ARRAY_HEIGHT;
 
-	sel->r.left = IMX415_PIXEL_ARRAY_LEFT +
-		IMX415_ISP_CROP_START(IMX415_PIXEL_ARRAY_WIDTH,
-				      IMX415_ISP_CROP_WIDTH);
-	sel->r.top = IMX415_PIXEL_ARRAY_TOP +
-		IMX415_ISP_CROP_START(IMX415_PIXEL_ARRAY_HEIGHT,
-				      IMX415_ISP_CROP_HEIGHT);
-	sel->r.width = IMX415_ISP_CROP_WIDTH;
-	sel->r.height = IMX415_ISP_CROP_HEIGHT;
+		return 0;
+	}
 
-	return 0;
-}
-
-static int imx415_get_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
-				  struct v4l2_mbus_config *config)
-{
-	struct imx415 *sensor = to_imx415(sd);
-
-	if (pad != 0)
-		return -EINVAL;
-
-	config->type = V4L2_MBUS_CSI2_DPHY;
-	config->link_freq = supported_modes[sensor->cur_mode].lane_rate / 2;
-	config->bus.mipi_csi2 = sensor->csi2;
-
-	return 0;
+	return -EINVAL;
 }
 
 static int imx415_init_state(struct v4l2_subdev *sd,
@@ -1113,64 +1075,6 @@ static int imx415_init_state(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static void imx415_get_module_info(struct imx415 *sensor,
-				   struct rkmodule_inf *info)
-{
-	memset(info, 0, sizeof(*info));
-	strscpy(info->base.sensor, IMX415_NAME, sizeof(info->base.sensor));
-
-	if (!sensor->has_module_info)
-		return;
-
-	strscpy(info->base.module, sensor->module_name,
-		sizeof(info->base.module));
-	strscpy(info->base.lens, sensor->lens_name, sizeof(info->base.lens));
-}
-
-static long imx415_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
-{
-	struct imx415 *sensor = to_imx415(sd);
-
-	switch (cmd) {
-	case RKMODULE_GET_MODULE_INFO:
-		imx415_get_module_info(sensor, arg);
-		return 0;
-	default:
-		return -ENOIOCTLCMD;
-	}
-}
-
-#ifdef CONFIG_COMPAT
-static long imx415_compat_ioctl32(struct v4l2_subdev *sd,
-				  unsigned int cmd, unsigned long arg)
-{
-	void __user *up = compat_ptr(arg);
-	struct rkmodule_inf *info;
-	long ret;
-
-	if (cmd != RKMODULE_GET_MODULE_INFO)
-		return -ENOIOCTLCMD;
-
-	info = kzalloc_obj(*info, GFP_KERNEL);
-	if (!info)
-		return -ENOMEM;
-
-	ret = imx415_ioctl(sd, cmd, info);
-	if (!ret && copy_to_user(up, info, sizeof(*info)))
-		ret = -EFAULT;
-
-	kfree(info);
-	return ret;
-}
-#endif
-
-static const struct v4l2_subdev_core_ops imx415_subdev_core_ops = {
-	.ioctl = imx415_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl32 = imx415_compat_ioctl32,
-#endif
-};
-
 static const struct v4l2_subdev_video_ops imx415_subdev_video_ops = {
 	.s_stream = imx415_s_stream,
 };
@@ -1181,11 +1085,9 @@ static const struct v4l2_subdev_pad_ops imx415_subdev_pad_ops = {
 	.get_fmt = v4l2_subdev_get_fmt,
 	.set_fmt = imx415_set_format,
 	.get_selection = imx415_get_selection,
-	.get_mbus_config = imx415_get_mbus_config,
 };
 
 static const struct v4l2_subdev_ops imx415_subdev_ops = {
-	.core = &imx415_subdev_core_ops,
 	.video = &imx415_subdev_video_ops,
 	.pad = &imx415_subdev_pad_ops,
 };
@@ -1201,12 +1103,6 @@ static int imx415_subdev_init(struct imx415 *sensor)
 
 	v4l2_i2c_subdev_init(&sensor->subdev, client, &imx415_subdev_ops);
 	sensor->subdev.internal_ops = &imx415_internal_ops;
-
-	if (sensor->has_module_info)
-		snprintf(sensor->subdev.name, sizeof(sensor->subdev.name),
-			 "m%02u_%c_%s %s", sensor->module_index,
-			 sensor->module_facing[0], IMX415_NAME,
-			 dev_name(sensor->dev));
 
 	ret = imx415_ctrls_init(sensor);
 	if (ret)
@@ -1328,65 +1224,6 @@ static int imx415_check_inck(unsigned long inck, u64 link_frequency)
 		return 0;
 }
 
-static int imx415_parse_module_info(struct imx415 *sensor)
-{
-	struct device_node *node = sensor->dev->of_node;
-	unsigned int count = 0;
-	int ret;
-
-	if (!node)
-		return 0;
-
-	count += of_property_present(node, RKMODULE_CAMERA_MODULE_INDEX);
-	count += of_property_present(node, RKMODULE_CAMERA_MODULE_FACING);
-	count += of_property_present(node, RKMODULE_CAMERA_MODULE_NAME);
-	count += of_property_present(node, RKMODULE_CAMERA_LENS_NAME);
-
-	if (!count)
-		return 0;
-
-	if (count != 4)
-		return dev_err_probe(sensor->dev, -EINVAL,
-				     "incomplete Rockchip camera module information\n");
-
-	ret = of_property_read_u32(node, RKMODULE_CAMERA_MODULE_INDEX,
-				   &sensor->module_index);
-	ret |= of_property_read_string(node, RKMODULE_CAMERA_MODULE_FACING,
-				       &sensor->module_facing);
-	ret |= of_property_read_string(node, RKMODULE_CAMERA_MODULE_NAME,
-				       &sensor->module_name);
-	ret |= of_property_read_string(node, RKMODULE_CAMERA_LENS_NAME,
-				       &sensor->lens_name);
-	if (ret)
-		return dev_err_probe(sensor->dev, -EINVAL,
-				     "invalid Rockchip camera module information\n");
-
-	if (sensor->module_index > 99)
-		return dev_err_probe(sensor->dev, -ERANGE,
-				     "camera module index must be between 0 and 99\n");
-
-	if (strlen(sensor->module_name) >= RKMODULE_NAME_LEN ||
-	    strlen(sensor->lens_name) >= RKMODULE_NAME_LEN)
-		return dev_err_probe(sensor->dev, -E2BIG,
-				     "camera module and lens names must be shorter than %d characters\n",
-				     RKMODULE_NAME_LEN);
-
-	if (!sensor->module_name[0] || !sensor->lens_name[0])
-		return dev_err_probe(sensor->dev, -EINVAL,
-				     "camera module and lens names must not be empty\n");
-
-	if (!strcmp(sensor->module_facing, "back"))
-		sensor->module_facing = "b";
-	else if (!strcmp(sensor->module_facing, "front"))
-		sensor->module_facing = "f";
-	else
-		return dev_err_probe(sensor->dev, -EINVAL,
-				     "camera module facing must be front or back\n");
-
-	sensor->has_module_info = true;
-	return 0;
-}
-
 static int imx415_parse_hw_config(struct imx415 *sensor)
 {
 	struct v4l2_fwnode_endpoint bus_cfg = {
@@ -1397,10 +1234,6 @@ static int imx415_parse_hw_config(struct imx415 *sensor)
 	unsigned long inck;
 	unsigned int i, j;
 	int ret;
-
-	ret = imx415_parse_module_info(sensor);
-	if (ret)
-		return ret;
 
 	for (i = 0; i < ARRAY_SIZE(sensor->supplies); ++i)
 		sensor->supplies[i].supply = imx415_supply_names[i];
@@ -1435,7 +1268,6 @@ static int imx415_parse_hw_config(struct imx415 *sensor)
 	case 2:
 	case 4:
 		sensor->num_data_lanes = bus_cfg.bus.mipi_csi2.num_data_lanes;
-		sensor->csi2 = bus_cfg.bus.mipi_csi2;
 		break;
 	default:
 		ret = dev_err_probe(sensor->dev, -EINVAL,
