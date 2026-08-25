@@ -133,6 +133,9 @@ dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3566-box-demo.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3566-lckfb-tspi.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3566-lubancat-0.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3566-lubancat-0-imx219.dtbo
+dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3566-lubancat-0-imx219.dtb
+rk3566-lubancat-0-imx219-dtbs := rk3566-lubancat-0.dtb \
+	rk3566-lubancat-0-imx219.dtbo
 DTC_FLAGS_rk3566-lubancat-0 := -@
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3566-lubancat-1.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3566-nanopi-r3s.dtb
