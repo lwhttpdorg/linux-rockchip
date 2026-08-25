@@ -436,11 +436,37 @@ static int csi2_dphy_update_config(struct v4l2_subdev *sd)
 {
 	struct csi2_dphy *dphy = to_csi2_dphy(sd);
 	struct v4l2_subdev *sensor_sd = get_remote_sensor(sd);
+	struct csi2_sensor *sensor;
 	struct rkmodule_csi_dphy_param dphy_param;
 	struct rkmodule_bus_config bus_config;
 	int csi_idx = 0;
 	int ret = 0;
 	int i = 0;
+
+	if (!sensor_sd)
+		return -ENODEV;
+
+	sensor = sd_to_sensor(dphy, sensor_sd);
+	if (!sensor)
+		return -ENODEV;
+
+	/*
+	 * RK3568 selects split mode from the D-PHY alias at probe time.  A
+	 * four-lane endpoint must use the full PHY even when the board also uses
+	 * that logical D-PHY node for a two-lane camera through an overlay.
+	 */
+	if (dphy->drv_data->chip_id == CHIP_ID_RK3568 &&
+	    sensor->mbus.type == V4L2_MBUS_CSI2_DPHY && sensor->lanes == 4) {
+		if (dphy->phy_index % 3 == 2) {
+			dev_err(dphy->dev,
+				"dphy%d only supports split lanes 2/3\n",
+				dphy->phy_index);
+			return -EINVAL;
+		}
+
+		dphy->lane_mode = PHY_FULL_MODE;
+		dphy->dphy_hw->lane_mode = LANE_MODE_FULL;
+	}
 
 	for (i = 0; i < dphy->csi_info.csi_num; i++) {
 		if (dphy->drv_data->chip_id != CHIP_ID_RK3568 &&

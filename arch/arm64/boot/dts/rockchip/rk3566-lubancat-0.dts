@@ -204,7 +204,7 @@
 		port {
 			imx415_out: endpoint {
 				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
-				data-lanes = <1 2>;
+				data-lanes = <1 2 3 4>;
 				link-frequencies = /bits/ 64 <445500000>;
 				remote-endpoint = <&lubancat_dphy_input>;
 			};
@@ -254,7 +254,7 @@
 	status = "disabled";
 };
 
-/* Two-lane IMX415 4K15 -> CSI D-PHY -> ISP2.1 capture path. */
+/* Four-lane IMX415 -> CSI D-PHY -> ISP2.1 capture path. */
 &csi_dphy {
 	compatible = "rockchip,rk3568-csi2-dphy-hw";
 	status = "okay";
@@ -273,7 +273,7 @@
 			lubancat_dphy_input: endpoint {
 				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
 				clock-lanes = <0>;
-				data-lanes = <1 2>;
+				data-lanes = <1 2 3 4>;
 				remote-endpoint = <&imx415_out>;
 			};
 		};
@@ -284,7 +284,7 @@
 			lubancat_dphy_output: endpoint {
 				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
 				clock-lanes = <0>;
-				data-lanes = <1 2>;
+				data-lanes = <1 2 3 4>;
 				remote-endpoint = <&lubancat_isp_input>;
 			};
 		};
@@ -296,7 +296,7 @@
 };
 
 &rkisp {
-	max-input = <3864 2192 15>;
+	max-input = <3864 2192 30>;
 	status = "okay";
 };
 
@@ -311,7 +311,7 @@
 		lubancat_isp_input: endpoint {
 			bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
 			clock-lanes = <0>;
-			data-lanes = <1 2>;
+			data-lanes = <1 2 3 4>;
 			remote-endpoint = <&lubancat_dphy_output>;
 		};
 	};

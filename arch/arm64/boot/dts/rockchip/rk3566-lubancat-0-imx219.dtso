@@ -85,7 +85,16 @@
 
 &lubancat_dphy_input {
 	clock-noncontinuous;
+	data-lanes = <1 2>;
 	remote-endpoint = <&imx219_out>;
+};
+
+&lubancat_dphy_output {
+	data-lanes = <1 2>;
+};
+
+&lubancat_isp_input {
+	data-lanes = <1 2>;
 };
 
 &rkisp {
