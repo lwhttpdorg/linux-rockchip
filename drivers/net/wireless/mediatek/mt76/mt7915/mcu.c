@@ -2917,8 +2917,15 @@ int mt7915_mcu_get_eeprom(struct mt7915_dev *dev, u32 offset, u8 *read_buf)
 		return ret;
 
 	res = (struct mt7915_mcu_eeprom_info *)skb->data;
-	if (!buf)
-		buf = dev->mt76.eeprom.data + le32_to_cpu(res->addr);
+	if (!buf) {
+		u32 addr = le32_to_cpu(res->addr);
+
+		if (addr > dev->mt76.eeprom.size - MT7915_EEPROM_BLOCK_SIZE) {
+			dev_kfree_skb(skb);
+			return -EINVAL;
+		}
+		buf = dev->mt76.eeprom.data + addr;
+	}
 	memcpy(buf, res->data, MT7915_EEPROM_BLOCK_SIZE);
 
 	dev_kfree_skb(skb);
@@ -3542,10 +3549,18 @@ int mt7915_mcu_get_txpower_sku(struct mt7915_phy *phy, s8 *txpower, int len,
 	if (category == TX_POWER_INFO_RATE) {
 		s8 res[MT7915_SKU_RATE_NUM][2];
 
+		if (skb->len < sizeof(res) + 4) {
+			dev_kfree_skb(skb);
+			return -EINVAL;
+		}
 		memcpy(res, skb->data + 4, sizeof(res));
 		for (i = 0; i < len; i++)
 			txpower[i] = res[i][req.band_idx];
 	} else if (category == TX_POWER_INFO_PATH) {
+		if (skb->len < len + 4) {
+			dev_kfree_skb(skb);
+			return -EINVAL;
+		}
 		memcpy(txpower, skb->data + 4, len);
 	}
 

@@ -5,6 +5,7 @@
  * Copyright (C) 2022 Loongson Technology Corporation Limited
  */
 #include <linux/memory.h>
+#include <asm/asm-offsets.h>
 #include "bpf_jit.h"
 
 #define LOONGARCH_MAX_REG_ARGS 8
@@ -123,6 +124,9 @@ static void prepare_bpf_tail_call_cnt(struct jit_ctx *ctx, int *store_offset)
  *                            |           tcc           |
  *                            +-------------------------+
  *                            |           tcc_ptr       |
+ *                            +-------------------------+
+ *                            |           arena         |
+ *                            |         (optional)      |
  *                            +-------------------------+ <--BPF_REG_FP
  *                            |  prog->aux->stack_depth |
  *                            |        (optional)       |
@@ -144,7 +148,7 @@ static void build_prologue(struct jit_ctx *ctx)
 	stack_adjust += sizeof(long) * 2;
 
 	if (ctx->arena_vm_start)
-		stack_adjust += 8;
+		stack_adjust += sizeof(long);
 
 	stack_adjust = round_up(stack_adjust, 16);
 	stack_adjust += bpf_stack_adjust;
@@ -193,12 +197,12 @@ static void build_prologue(struct jit_ctx *ctx)
 	store_offset -= sizeof(long);
 	emit_insn(ctx, std, LOONGARCH_GPR_S5, LOONGARCH_GPR_SP, store_offset);
 
+	prepare_bpf_tail_call_cnt(ctx, &store_offset);
+
 	if (ctx->arena_vm_start) {
 		store_offset -= sizeof(long);
 		emit_insn(ctx, std, REG_ARENA, LOONGARCH_GPR_SP, store_offset);
 	}
-
-	prepare_bpf_tail_call_cnt(ctx, &store_offset);
 
 	emit_insn(ctx, addid, LOONGARCH_GPR_FP, LOONGARCH_GPR_SP, stack_adjust);
 
@@ -240,20 +244,17 @@ static void __build_epilogue(struct jit_ctx *ctx, bool is_tail_call)
 	load_offset -= sizeof(long);
 	emit_insn(ctx, ldd, LOONGARCH_GPR_S5, LOONGARCH_GPR_SP, load_offset);
 
+	/* Only restore the TCC state into REG_TCC from the higher slot */
+	load_offset -= sizeof(long);
+	emit_insn(ctx, ldd, REG_TCC, LOONGARCH_GPR_SP, load_offset);
+
+	/* Skip the unused local 'tcc_ptr' slot to align with arena */
+	load_offset -= sizeof(long);
+
 	if (ctx->arena_vm_start) {
 		load_offset -= sizeof(long);
 		emit_insn(ctx, ldd, REG_ARENA, LOONGARCH_GPR_SP, load_offset);
 	}
-
-	/*
-	 * When push into the stack, follow the order of tcc then tcc_ptr.
-	 * When pop from the stack, first pop tcc_ptr then followed by tcc.
-	 */
-	load_offset -= 2 * sizeof(long);
-	emit_insn(ctx, ldd, REG_TCC, LOONGARCH_GPR_SP, load_offset);
-
-	load_offset += sizeof(long);
-	emit_insn(ctx, ldd, REG_TCC, LOONGARCH_GPR_SP, load_offset);
 
 	emit_insn(ctx, addid, LOONGARCH_GPR_SP, LOONGARCH_GPR_SP, stack_adjust);
 
@@ -289,17 +290,13 @@ bool bpf_jit_supports_far_kfunc_call(void)
 
 static int emit_bpf_tail_call(struct jit_ctx *ctx, int insn)
 {
-	int off, tc_ninsn = 0;
+	int off, jmp_offset;
 	int tcc_ptr_off = BPF_TAIL_CALL_CNT_PTR_STACK_OFF(ctx->stack_size);
 	u8 a1 = LOONGARCH_GPR_A1;
 	u8 a2 = LOONGARCH_GPR_A2;
 	u8 t1 = LOONGARCH_GPR_T1;
 	u8 t2 = LOONGARCH_GPR_T2;
 	u8 t3 = LOONGARCH_GPR_T3;
-	const int idx0 = ctx->idx;
-
-#define cur_offset (ctx->idx - idx0)
-#define jmp_offset (tc_ninsn - (cur_offset))
 
 	/*
 	 * a0: &ctx
@@ -309,12 +306,12 @@ static int emit_bpf_tail_call(struct jit_ctx *ctx, int insn)
 	 * if (index >= array->map.max_entries)
 	 *	 goto out;
 	 */
-	tc_ninsn = insn ? ctx->offset[insn+1] - ctx->offset[insn] : ctx->offset[0];
 	emit_zext_32(ctx, a2, true);
 
 	off = offsetof(struct bpf_array, map.max_entries);
 	emit_insn(ctx, ldwu, t1, a1, off);
 	/* bgeu $a2, $t1, jmp_offset */
+	jmp_offset = ctx->image ? (ctx->offset[insn + 1] - ctx->idx) : 0;
 	if (emit_tailcall_jmp(ctx, BPF_JGE, a2, t1, jmp_offset) < 0)
 		goto toofar;
 
@@ -325,6 +322,7 @@ static int emit_bpf_tail_call(struct jit_ctx *ctx, int insn)
 	emit_insn(ctx, ldd, REG_TCC, LOONGARCH_GPR_SP, tcc_ptr_off);
 	emit_insn(ctx, ldd, t3, REG_TCC, 0);
 	emit_insn(ctx, addid, t2, LOONGARCH_GPR_ZERO, MAX_TAIL_CALL_CNT);
+	jmp_offset = ctx->image ? (ctx->offset[insn + 1] - ctx->idx) : 0;
 	if (emit_tailcall_jmp(ctx, BPF_JSGE, t3, t2, jmp_offset) < 0)
 		goto toofar;
 
@@ -339,6 +337,7 @@ static int emit_bpf_tail_call(struct jit_ctx *ctx, int insn)
 	off = offsetof(struct bpf_array, ptrs);
 	emit_insn(ctx, ldd, t2, t2, off);
 	/* beq $t2, $zero, jmp_offset */
+	jmp_offset = ctx->image ? (ctx->offset[insn + 1] - ctx->idx) : 0;
 	if (emit_tailcall_jmp(ctx, BPF_JEQ, t2, LOONGARCH_GPR_ZERO, jmp_offset) < 0)
 		goto toofar;
 
@@ -354,8 +353,6 @@ static int emit_bpf_tail_call(struct jit_ctx *ctx, int insn)
 toofar:
 	pr_info_once("tail_call: jump too far\n");
 	return -1;
-#undef cur_offset
-#undef jmp_offset
 }
 
 static void emit_store_stack_imm64(struct jit_ctx *ctx, int reg, int stack_off, u64 imm64)
@@ -737,7 +734,7 @@ static int build_insn(const struct bpf_insn *insn, struct jit_ctx *ctx, bool ext
 			move_reg(ctx, t1, src);
 			emit_zext_32(ctx, t1, true);
 			move_imm(ctx, dst, (ctx->user_vm_start >> 32) << 32, false);
-			emit_insn(ctx, beq, t1, LOONGARCH_GPR_ZERO, 1);
+			emit_insn(ctx, beq, t1, LOONGARCH_GPR_ZERO, 2);
 			emit_insn(ctx, or, t1, dst, t1);
 			move_reg(ctx, dst, t1);
 			break;
@@ -1161,6 +1158,19 @@ static int build_insn(const struct bpf_insn *insn, struct jit_ctx *ctx, bool ext
 
 	/* function call */
 	case BPF_JMP | BPF_CALL:
+		/* Implement helper call to bpf_get_current_task/_btf() inline */
+		if (insn->src_reg == 0 && (insn->imm == BPF_FUNC_get_current_task ||
+					   insn->imm == BPF_FUNC_get_current_task_btf)) {
+			move_reg(ctx, regmap[BPF_REG_0], LOONGARCH_GPR_TP);
+			break;
+		}
+
+		/* Implement helper call to bpf_get_smp_processor_id() inline */
+		if (insn->src_reg == 0 && insn->imm == BPF_FUNC_get_smp_processor_id) {
+			emit_insn(ctx, ldwu, regmap[BPF_REG_0], LOONGARCH_GPR_TP, TI_CPU);
+			break;
+		}
+
 		ret = bpf_jit_get_func_addr(ctx->prog, insn, extra_pass,
 					    &func_addr, &func_addr_fixed);
 		if (ret < 0)
@@ -1688,17 +1698,17 @@ static void restore_stk_args(struct jit_ctx *ctx, int nr_stk_args, int args_off,
 	}
 }
 
-static int invoke_bpf_prog(struct jit_ctx *ctx, struct bpf_tramp_link *l,
+static int invoke_bpf_prog(struct jit_ctx *ctx, struct bpf_tramp_node *n,
 			   int args_off, int retval_off, int run_ctx_off, bool save_ret)
 {
 	int ret;
 	u32 *branch;
-	struct bpf_prog *p = l->link.prog;
+	struct bpf_prog *p = n->link->prog;
 	int cookie_off = offsetof(struct bpf_tramp_run_ctx, bpf_cookie);
 
-	if (l->cookie)
+	if (n->cookie)
 		emit_store_stack_imm64(ctx, LOONGARCH_GPR_T1,
-				      -run_ctx_off + cookie_off, l->cookie);
+				      -run_ctx_off + cookie_off, n->cookie);
 	else
 		emit_insn(ctx, std, LOONGARCH_GPR_ZERO, LOONGARCH_GPR_FP, -run_ctx_off + cookie_off);
 
@@ -1751,22 +1761,22 @@ static int invoke_bpf_prog(struct jit_ctx *ctx, struct bpf_tramp_link *l,
 	return ret;
 }
 
-static int invoke_bpf(struct jit_ctx *ctx, struct bpf_tramp_links *tl,
+static int invoke_bpf(struct jit_ctx *ctx, struct bpf_tramp_nodes *tn,
 		      int args_off, int retval_off, int run_ctx_off,
 		      int func_meta_off, bool save_ret, u64 func_meta, int cookie_off)
 {
 	int i, cur_cookie = (cookie_off - args_off) / 8;
 
-	for (i = 0; i < tl->nr_links; i++) {
+	for (i = 0; i < tn->nr_nodes; i++) {
 		int err;
 
-		if (bpf_prog_calls_session_cookie(tl->links[i])) {
+		if (bpf_prog_calls_session_cookie(tn->nodes[i])) {
 			u64 meta = func_meta | ((u64)cur_cookie << BPF_TRAMP_COOKIE_INDEX_SHIFT);
 
 			emit_store_stack_imm64(ctx, LOONGARCH_GPR_T1, -func_meta_off, meta);
 			cur_cookie--;
 		}
-		err = invoke_bpf_prog(ctx, tl->links[i], args_off, retval_off, run_ctx_off, save_ret);
+		err = invoke_bpf_prog(ctx, tn->nodes[i], args_off, retval_off, run_ctx_off, save_ret);
 		if (err)
 			return err;
 	}
@@ -1821,7 +1831,7 @@ static void sign_extend(struct jit_ctx *ctx, int rd, int rj, u8 size, bool sign)
 }
 
 static int __arch_prepare_bpf_trampoline(struct jit_ctx *ctx, struct bpf_tramp_image *im,
-					 const struct btf_func_model *m, struct bpf_tramp_links *tlinks,
+					 const struct btf_func_model *m, struct bpf_tramp_nodes *tnodes,
 					 void *func_addr, u32 flags)
 {
 	int i, ret, save_ret;
@@ -1831,9 +1841,9 @@ static int __arch_prepare_bpf_trampoline(struct jit_ctx *ctx, struct bpf_tramp_i
 	unsigned long long func_meta;
 	bool is_struct_ops = flags & BPF_TRAMP_F_INDIRECT;
 	void *orig_call = func_addr;
-	struct bpf_tramp_links *fentry = &tlinks[BPF_TRAMP_FENTRY];
-	struct bpf_tramp_links *fexit = &tlinks[BPF_TRAMP_FEXIT];
-	struct bpf_tramp_links *fmod_ret = &tlinks[BPF_TRAMP_MODIFY_RETURN];
+	struct bpf_tramp_nodes *fentry = &tnodes[BPF_TRAMP_FENTRY];
+	struct bpf_tramp_nodes *fexit = &tnodes[BPF_TRAMP_FEXIT];
+	struct bpf_tramp_nodes *fmod_ret = &tnodes[BPF_TRAMP_MODIFY_RETURN];
 	u32 **branches = NULL;
 
 	/*
@@ -1912,7 +1922,7 @@ static int __arch_prepare_bpf_trampoline(struct jit_ctx *ctx, struct bpf_tramp_i
 		ip_off = stack_size;
 	}
 
-	cookie_cnt = bpf_fsession_cookie_cnt(tlinks);
+	cookie_cnt = bpf_fsession_cookie_cnt(tnodes);
 
 	/* Room for session cookies */
 	stack_size += cookie_cnt * 8;
@@ -1983,7 +1993,7 @@ static int __arch_prepare_bpf_trampoline(struct jit_ctx *ctx, struct bpf_tramp_i
 
 	store_args(ctx, nr_arg_slots, args_off);
 
-	if (bpf_fsession_cnt(tlinks)) {
+	if (bpf_fsession_cnt(tnodes)) {
 		/* clear all session cookies' value */
 		for (i = 0; i < cookie_cnt; i++)
 			emit_insn(ctx, std, LOONGARCH_GPR_ZERO, LOONGARCH_GPR_FP, -cookie_off + 8 * i);
@@ -2008,20 +2018,20 @@ static int __arch_prepare_bpf_trampoline(struct jit_ctx *ctx, struct bpf_tramp_i
 			return ret;
 	}
 
-	if (fentry->nr_links) {
+	if (fentry->nr_nodes) {
 		ret = invoke_bpf(ctx, fentry, args_off, retval_off, run_ctx_off, func_meta_off,
 				 flags & BPF_TRAMP_F_RET_FENTRY_RET, func_meta, cookie_off);
 		if (ret)
 			return ret;
 	}
-	if (fmod_ret->nr_links) {
-		branches  = kcalloc(fmod_ret->nr_links, sizeof(u32 *), GFP_KERNEL);
+	if (fmod_ret->nr_nodes) {
+		branches  = kcalloc(fmod_ret->nr_nodes, sizeof(u32 *), GFP_KERNEL);
 		if (!branches)
 			return -ENOMEM;
 
 		emit_insn(ctx, std, LOONGARCH_GPR_ZERO, LOONGARCH_GPR_FP, -retval_off);
-		for (i = 0; i < fmod_ret->nr_links; i++) {
-			ret = invoke_bpf_prog(ctx, fmod_ret->links[i],
+		for (i = 0; i < fmod_ret->nr_nodes; i++) {
+			ret = invoke_bpf_prog(ctx, fmod_ret->nodes[i],
 					      args_off, retval_off, run_ctx_off, true);
 			if (ret)
 				goto out;
@@ -2049,17 +2059,17 @@ static int __arch_prepare_bpf_trampoline(struct jit_ctx *ctx, struct bpf_tramp_i
 			emit_insn(ctx, nop);
 	}
 
-	for (i = 0; ctx->image && i < fmod_ret->nr_links; i++) {
+	for (i = 0; ctx->image && i < fmod_ret->nr_nodes; i++) {
 		int offset = (void *)(&ctx->image[ctx->idx]) - (void *)branches[i];
 		*branches[i] = larch_insn_gen_bne(LOONGARCH_GPR_T1, LOONGARCH_GPR_ZERO, offset);
 	}
 
 	/* Set "is_return" flag for fsession */
 	func_meta |= (1ULL << BPF_TRAMP_IS_RETURN_SHIFT);
-	if (bpf_fsession_cnt(tlinks))
+	if (bpf_fsession_cnt(tnodes))
 		emit_store_stack_imm64(ctx, LOONGARCH_GPR_T1, -func_meta_off, func_meta);
 
-	if (fexit->nr_links) {
+	if (fexit->nr_nodes) {
 		ret = invoke_bpf(ctx, fexit, args_off, retval_off, run_ctx_off,
 				 func_meta_off, false, func_meta, cookie_off);
 		if (ret)
@@ -2129,7 +2139,7 @@ out:
 
 int arch_prepare_bpf_trampoline(struct bpf_tramp_image *im, void *ro_image,
 				void *ro_image_end, const struct btf_func_model *m,
-				u32 flags, struct bpf_tramp_links *tlinks, void *func_addr)
+				u32 flags, struct bpf_tramp_nodes *tnodes, void *func_addr)
 {
 	int ret, size;
 	void *image, *tmp;
@@ -2145,7 +2155,7 @@ int arch_prepare_bpf_trampoline(struct bpf_tramp_image *im, void *ro_image,
 	ctx.idx = 0;
 
 	jit_fill_hole(image, (unsigned int)(ro_image_end - ro_image));
-	ret = __arch_prepare_bpf_trampoline(&ctx, im, m, tlinks, func_addr, flags);
+	ret = __arch_prepare_bpf_trampoline(&ctx, im, m, tnodes, func_addr, flags);
 	if (ret < 0)
 		goto out;
 
@@ -2166,7 +2176,7 @@ out:
 }
 
 int arch_bpf_trampoline_size(const struct btf_func_model *m, u32 flags,
-			     struct bpf_tramp_links *tlinks, void *func_addr)
+			     struct bpf_tramp_nodes *tnodes, void *func_addr)
 {
 	int ret;
 	struct jit_ctx ctx;
@@ -2175,7 +2185,7 @@ int arch_bpf_trampoline_size(const struct btf_func_model *m, u32 flags,
 	ctx.image = NULL;
 	ctx.idx = 0;
 
-	ret = __arch_prepare_bpf_trampoline(&ctx, &im, m, tlinks, func_addr, flags);
+	ret = __arch_prepare_bpf_trampoline(&ctx, &im, m, tnodes, func_addr, flags);
 
 	return ret < 0 ? ret : ret * LOONGARCH_INSN_SIZE;
 }
@@ -2382,4 +2392,16 @@ bool bpf_jit_supports_fsession(void)
 bool bpf_jit_supports_subprog_tailcalls(void)
 {
 	return true;
+}
+
+bool bpf_jit_inlines_helper_call(s32 imm)
+{
+	switch (imm) {
+	case BPF_FUNC_get_current_task:
+	case BPF_FUNC_get_current_task_btf:
+	case BPF_FUNC_get_smp_processor_id:
+		return true;
+	default:
+		return false;
+	}
 }

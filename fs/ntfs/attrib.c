@@ -16,6 +16,7 @@
  * Copyright (c) 2010 Erik Larsson
  */
 
+#include <linux/string_choices.h>
 #include <linux/writeback.h>
 #include <linux/iomap.h>
 
@@ -692,6 +693,8 @@ static bool ntfs_non_resident_attr_value_is_valid(const struct attr_record *a)
 	u32 attr_len;
 	u32 min_len;
 	u16 mp_offset;
+	u16 name_offset;
+	u32 name_end;
 
 	attr_len = le32_to_cpu(a->length);
 	min_len = offsetof(struct attr_record, data.non_resident.initialized_size) +
@@ -700,7 +703,27 @@ static bool ntfs_non_resident_attr_value_is_valid(const struct attr_record *a)
 		return false;
 
 	mp_offset = le16_to_cpu(a->data.non_resident.mapping_pairs_offset);
-	return mp_offset >= min_len && mp_offset <= attr_len;
+	if (mp_offset < min_len || mp_offset > attr_len)
+		return false;
+
+	if (a->name_length) {
+		name_offset = le16_to_cpu(a->name_offset);
+
+		if (name_offset < min_len || name_offset >= attr_len)
+			return false;
+
+		name_end = name_offset + a->name_length * sizeof(__le16);
+		if (name_end > attr_len || name_end > mp_offset)
+			return false;
+	}
+
+	/* Ensure there's room for the compressed_size field if needed. */
+	if (!(a->flags & (ATTR_IS_SPARSE | ATTR_COMPRESSION_MASK)) &&
+	    attr_len - mp_offset <
+			sizeof(a->data.non_resident.compressed_size))
+		return false;
+
+	return true;
 }
 
 static bool ntfs_attr_value_is_valid(struct ntfs_volume *vol,
@@ -2002,7 +2025,7 @@ int ntfs_attr_make_non_resident(struct ntfs_inode *ni, const u32 data_size)
 		if (IS_ERR(rl)) {
 			err = PTR_ERR(rl);
 			ntfs_debug("Failed to allocate cluster%s, error code %i.",
-					ntfs_bytes_to_cluster(vol, new_size) > 1 ? "s" : "",
+					str_plural(ntfs_bytes_to_cluster(vol, new_size)),
 					err);
 			goto folio_err_out;
 		}

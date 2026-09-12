@@ -152,6 +152,13 @@ static void ethosu_job_err_cleanup(struct ethosu_job *job)
 
 	drm_gem_object_put(job->cmd_bo);
 
+	if (job->done_fence) {
+		if (dma_fence_was_initialized(job->done_fence))
+			dma_fence_put(job->done_fence);
+		else
+			dma_fence_free(job->done_fence);
+	}
+
 	kfree(job);
 }
 
@@ -162,7 +169,6 @@ static void ethosu_job_cleanup(struct kref *ref)
 
 	pm_runtime_put_autosuspend(job->dev->base.dev);
 
-	dma_fence_put(job->done_fence);
 	dma_fence_put(job->inference_done_fence);
 
 	ethosu_job_err_cleanup(job);
@@ -393,7 +399,7 @@ static int ethosu_ioctl_submit_job(struct drm_device *dev, struct drm_file *file
 	ejob->done_fence = kzalloc_obj(*ejob->done_fence);
 	if (!ejob->done_fence) {
 		ret = -ENOMEM;
-		goto out_cleanup_job;
+		goto out_put_job;
 	}
 
 	ret = drm_sched_job_init(&ejob->base,
@@ -417,9 +423,21 @@ static int ethosu_ioctl_submit_job(struct drm_device *dev, struct drm_file *file
 		struct drm_gem_object *gem;
 
 		/* Can only omit a BO handle if the region is not used or used for SRAM */
-		if (!job->region_bo_handles[i] &&
-		    (!cmd_info->region_size[i] || (i == ETHOSU_SRAM_REGION && job->sram_size)))
-			continue;
+		if (!job->region_bo_handles[i]) {
+			if (!cmd_info->region_size[i])
+				continue;
+			if (i == ETHOSU_SRAM_REGION) {
+				if (cmd_info->region_size[i] <= edev->npu_info.sram_size)
+					continue;
+
+				dev_err(dev->dev,
+					"cmd stream region %d size greater than SRAM size (%llu > %u)\n",
+					i, cmd_info->region_size[i],
+					edev->npu_info.sram_size);
+				ret = -EINVAL;
+				goto out_cleanup_job;
+			}
+		}
 
 		if (job->region_bo_handles[i] && !cmd_info->region_size[i]) {
 			dev_err(dev->dev,

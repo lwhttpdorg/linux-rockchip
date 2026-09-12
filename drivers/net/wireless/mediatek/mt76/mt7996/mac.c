@@ -48,7 +48,7 @@ static struct mt76_wcid *mt7996_rx_get_wcid(struct mt7996_dev *dev,
 		if (mlink->band_idx != band_idx)
 			continue;
 
-		msta_link = rcu_dereference(msta->link[i]);
+		msta_link = mt7996_sta_link(msta, i);
 		break;
 	}
 
@@ -1033,7 +1033,7 @@ int mt7996_tx_prepare_skb(struct mt76_dev *mdev, void *txwi_ptr,
 	if (link_id != wcid->link_id && link_id != IEEE80211_LINK_UNSPECIFIED) {
 		if (msta) {
 			struct mt7996_sta_link *msta_link =
-				rcu_dereference(msta->link[link_id]);
+				mt7996_sta_link(msta, link_id);
 
 			if (msta_link)
 				wcid = &msta_link->wcid;
@@ -1240,6 +1240,30 @@ mt7996_tx_check_aggr(struct ieee80211_link_sta *link_sta,
 }
 
 static void
+mt7996_txp_skb_unmap(struct mt76_dev *mdev, struct mt76_txwi_cache *t)
+{
+	u8 *txwi_ptr = mt76_get_txwi_ptr(mdev, t);
+	__le32 *txwi = (__le32 *)txwi_ptr;
+	__le32 *txp;
+	dma_addr_t addr;
+	u32 val;
+
+	if (!(le32_to_cpu(txwi[7]) & MT_TXD7_MAC_TXD)) {
+		mt76_connac_txp_skb_unmap(mdev, t);
+		return;
+	}
+
+	txp = (__le32 *)(txwi_ptr + MT_TXD_SIZE);
+	val = le32_to_cpu(txp[3]);
+	addr = le32_to_cpu(txp[2]);
+#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
+	addr |= (dma_addr_t)FIELD_GET(MT_TXP3_DMA_ADDR_H, val) << 32;
+#endif
+	dma_unmap_single(mdev->dma_dev, addr, FIELD_GET(MT_TXP_BUF_LEN, val),
+			 DMA_TO_DEVICE);
+}
+
+static void
 mt7996_txwi_free(struct mt7996_dev *dev, struct mt76_txwi_cache *t,
 		 struct ieee80211_link_sta *link_sta,
 		 struct mt76_wcid *wcid, struct list_head *free_list)
@@ -1248,7 +1272,7 @@ mt7996_txwi_free(struct mt7996_dev *dev, struct mt76_txwi_cache *t,
 	__le32 *txwi;
 	u16 wcid_idx;
 
-	mt76_connac_txp_skb_unmap(mdev, t);
+	mt7996_txp_skb_unmap(mdev, t);
 	if (!t->skb)
 		goto out;
 
@@ -1345,7 +1369,7 @@ mt7996_mac_tx_free(struct mt7996_dev *dev, void *data, int len)
 					 IEEE80211_MLD_MAX_NUM_LINKS) {
 				struct mt7996_sta_link *msta_link;
 
-				msta_link = rcu_dereference(msta->link[id]);
+				msta_link = mt7996_sta_link(msta, id);
 				if (!msta_link)
 					continue;
 
@@ -2058,8 +2082,6 @@ void mt7996_mac_set_coverage_class(struct mt7996_phy *phy)
 {
 	s16 coverage_class = phy->coverage_class;
 	struct mt7996_dev *dev = phy->dev;
-	struct mt7996_phy *phy2 = mt7996_phy2(dev);
-	struct mt7996_phy *phy3 = mt7996_phy3(dev);
 	u32 reg_offset;
 	u32 cck = FIELD_PREP(MT_TIMEOUT_VAL_PLCP, 231) |
 		  FIELD_PREP(MT_TIMEOUT_VAL_CCA, 48);
@@ -2070,14 +2092,6 @@ void mt7996_mac_set_coverage_class(struct mt7996_phy *phy)
 
 	if (!test_bit(MT76_STATE_RUNNING, &phy->mt76->state))
 		return;
-
-	if (phy2)
-		coverage_class = max_t(s16, dev->phy.coverage_class,
-				       phy2->coverage_class);
-
-	if (phy3)
-		coverage_class = max_t(s16, coverage_class,
-				       phy3->coverage_class);
 
 	offset = 3 * coverage_class;
 	reg_offset = FIELD_PREP(MT_TIMEOUT_VAL_PLCP, offset) |

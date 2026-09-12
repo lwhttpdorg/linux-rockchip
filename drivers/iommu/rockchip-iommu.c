@@ -72,14 +72,13 @@
 #define RK_MMU_IRQ_BUS_ERROR     0x02  /* bus read error */
 #define RK_MMU_IRQ_MASK          (RK_MMU_IRQ_PAGE_FAULT | RK_MMU_IRQ_BUS_ERROR)
 
-/* RK356x IOMMUs may otherwise time out while fetching a directory entry. */
-#define RK_MMU_DISABLE_FETCH_DTE_TIME_LIMIT	BIT(31)
-
 #define NUM_DT_ENTRIES 1024
 #define NUM_PT_ENTRIES 1024
 
 #define SPAGE_ORDER 12
 #define SPAGE_SIZE (1 << SPAGE_ORDER)
+
+#define DISABLE_FETCH_DTE_TIME_LIMIT BIT(31)
 
  /*
   * Support mapping any size that fits in one page table:
@@ -956,20 +955,10 @@ static int rk_iommu_enable(struct rk_iommu *iommu)
 		rk_iommu_base_command(iommu->bases[i], RK_MMU_CMD_ZAP_CACHE);
 		rk_iommu_write(iommu->bases[i], RK_MMU_INT_MASK, RK_MMU_IRQ_MASK);
 
-		/*
-		 * An RK356x shared multimedia reset clears AUTO_GATING along with
-		 * the page-table registers.  Without restoring bit 31 the IOMMU
-		 * can time out fetching the first DTE and report a BUS_ERROR at
-		 * IOVA 0.  These IOMMUs use disable-mmu-reset because their reset
-		 * line is shared with the master; keep the workaround scoped to
-		 * that hardware so unrelated Rockchip IOMMUs are unchanged.
-		 */
-		if (iommu->reset_disabled) {
-			auto_gate = rk_iommu_read(iommu->bases[i], RK_MMU_AUTO_GATING);
-			auto_gate |= RK_MMU_DISABLE_FETCH_DTE_TIME_LIMIT;
-			rk_iommu_write(iommu->bases[i], RK_MMU_AUTO_GATING,
-				       auto_gate);
-		}
+		/* Workaround for iommu blocked, BIT(31) default to 1 */
+		auto_gate = rk_iommu_read(iommu->bases[i], RK_MMU_AUTO_GATING);
+		auto_gate |= DISABLE_FETCH_DTE_TIME_LIMIT;
+		rk_iommu_write(iommu->bases[i], RK_MMU_AUTO_GATING, auto_gate);
 	}
 
 	ret = rk_iommu_enable_paging(iommu);
