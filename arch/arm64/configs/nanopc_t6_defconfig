@@ -1,8 +1,8 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/arm64 7.2.5 Kernel Configuration
+# Linux/arm64 7.2.6 Kernel Configuration
 #
-CONFIG_CC_VERSION_TEXT="aarch64-linux-gnu-gcc (Debian 14.2.0-19) 14.2.0"
+CONFIG_CC_VERSION_TEXT="gcc (Debian 14.2.0-19) 14.2.0"
 CONFIG_CC_IS_GCC=y
 CONFIG_GCC_VERSION=140200
 CONFIG_CLANG_VERSION=0
@@ -3337,6 +3337,7 @@ CONFIG_GENERIC_PINCONF=y
 # CONFIG_DEBUG_PINCTRL is not set
 # CONFIG_PINCTRL_AW9523 is not set
 # CONFIG_PINCTRL_CY8C95X0 is not set
+# CONFIG_PINCTRL_GENERIC_MUX is not set
 # CONFIG_PINCTRL_MCP23S08 is not set
 # CONFIG_PINCTRL_MICROCHIP_SGPIO is not set
 # CONFIG_PINCTRL_OCELOT is not set
