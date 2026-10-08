@@ -25,13 +25,20 @@ properties:
     maxItems: 1
 
   interrupts:
-    maxItems: 3
+    minItems: 3
+    maxItems: 4
 
   interrupt-names:
+    minItems: 3
     items:
       - const: cec
       - const: hdmi
       - const: dma
+      - const: hdmi-fiq
+    description:
+      The optional hdmi-fiq interrupt is the non-secure interrupt used by
+      Rockchip TF-A to forward the HDMI receiver's secure FIQ. Firmware
+      without this forwarding interface uses the hdmi interrupt directly.
 
   clocks:
     maxItems: 7
