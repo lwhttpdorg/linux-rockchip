@@ -403,6 +403,14 @@
 			  "", "", "", "";
 };
 
+&gic {
+	/*
+	 * Reserve INTID 468 (SPI 436) for Rockchip TF-A's HDMIRX FIQ forwarding.
+	 * Start the second MBI range at an 8-vector boundary for multi-MSI.
+	 */
+	mbi-ranges = <424 44>, <472 8>;
+};
+
 &gpu {
 	mali-supply = <&vdd_gpu_s0>;
 	status = "okay";
@@ -469,6 +477,11 @@
 };
 
 &hdmi_receiver {
+	interrupts = <GIC_SPI 177 IRQ_TYPE_LEVEL_HIGH 0>,
+		     <GIC_SPI 178 IRQ_TYPE_LEVEL_HIGH 0>,
+		     <GIC_SPI 179 IRQ_TYPE_LEVEL_HIGH 0>,
+		     <GIC_SPI 436 IRQ_TYPE_LEVEL_HIGH 0>;
+	interrupt-names = "cec", "hdmi", "dma", "hdmi-fiq";
 	hpd-gpios = <&gpio1 RK_PD5 GPIO_ACTIVE_LOW>;
 	pinctrl-0 = <&hdmim1_rx_cec &hdmim1_rx_hpdin &hdmim1_rx_scl &hdmim1_rx_sda &hdmirx_hpd>;
 	pinctrl-names = "default";

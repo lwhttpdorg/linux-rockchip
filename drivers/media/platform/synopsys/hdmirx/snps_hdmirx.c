@@ -8,6 +8,7 @@
  * Author: Dingxian Wen <shawn.wen@rock-chips.com>
  */
 
+#include <linux/arm-smccc.h>
 #include <linux/clk.h>
 #include <linux/completion.h>
 #include <linux/delay.h>
@@ -30,6 +31,10 @@
 #include <linux/v4l2-dv-timings.h>
 #include <linux/workqueue.h>
 
+#ifdef CONFIG_ARM64
+#include <asm/smp_plat.h>
+#endif
+
 #include <media/cec.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ctrls.h>
@@ -49,6 +54,14 @@
 #define HDMIRX_PLANE_Y					0
 #define HDMIRX_PLANE_CBCR				1
 #define FILTER_FRAME_CNT				6
+
+#define RK_SIP_FIQ_CTRL		ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL, \
+						   ARM_SMCCC_SMC_32, \
+						   ARM_SMCCC_OWNER_SIP, 0x24)
+#define RK_SIP_FIQ_ENABLE	1
+#define RK_SIP_FIQ_DISABLE	2
+#define RK_SIP_FIQ_SET_AFFINITY	3
+#define RK_HDMIRX_HDMI_INTID	210
 
 static int debug;
 module_param(debug, int, 0644);
@@ -148,6 +161,7 @@ struct snps_hdmirx_dev {
 	enum hdmirx_pix_fmt pix_fmt;
 	void __iomem *regs;
 	int hdmi_irq;
+	bool hdmi_fiq;
 	int dma_irq;
 	int det_irq;
 	bool hpd_trigger_level_high;
@@ -160,6 +174,71 @@ struct snps_hdmirx_dev {
 	spinlock_t rst_lock; /* to lock register access */
 	u8 edid[EDID_NUM_BLOCKS_MAX * EDID_BLOCK_SIZE];
 };
+
+static int hdmirx_fiq_control(u32 command, unsigned long data)
+{
+	struct arm_smccc_res res;
+
+	if (!IS_ENABLED(CONFIG_HAVE_ARM_SMCCC))
+		return -EOPNOTSUPP;
+
+	arm_smccc_smc(RK_SIP_FIQ_CTRL, command, RK_HDMIRX_HDMI_INTID,
+		      data, 0, 0, 0, 0, &res);
+
+	return (int)res.a0;
+}
+
+static void hdmirx_enable_hdmi_irq(struct snps_hdmirx_dev *hdmirx_dev)
+{
+	enable_irq(hdmirx_dev->hdmi_irq);
+	if (hdmirx_dev->hdmi_fiq)
+		hdmirx_fiq_control(RK_SIP_FIQ_ENABLE, 0);
+}
+
+static void hdmirx_disable_hdmi_irq(struct snps_hdmirx_dev *hdmirx_dev)
+{
+	/* Wait for the handler's FIQ re-arm before disabling it in firmware. */
+	disable_irq(hdmirx_dev->hdmi_irq);
+	if (hdmirx_dev->hdmi_fiq)
+		hdmirx_fiq_control(RK_SIP_FIQ_DISABLE, 0);
+}
+
+static void __maybe_unused hdmirx_release_fiq(void *data)
+{
+	struct snps_hdmirx_dev *hdmirx_dev = data;
+
+	hdmirx_fiq_control(RK_SIP_FIQ_DISABLE, 0);
+	irq_update_affinity_hint(hdmirx_dev->hdmi_irq, NULL);
+	hdmirx_dev->hdmi_fiq = false;
+}
+
+static int hdmirx_setup_fiq(struct snps_hdmirx_dev *hdmirx_dev, int irq)
+{
+#ifdef CONFIG_ARM64
+	struct device *dev = hdmirx_dev->dev;
+	int ret;
+
+	/* An unsupported SiP call leaves the upstream IRQ path unchanged. */
+	ret = hdmirx_fiq_control(RK_SIP_FIQ_DISABLE, 0);
+	if (ret == ARM_SMCCC_RET_NOT_SUPPORTED || ret == -2 || ret == -EOPNOTSUPP)
+		return 0;
+	if (ret)
+		return dev_err_probe(dev, -EIO, "failed to disable HDMIRX FIQ: %d\n", ret);
+
+	hdmirx_dev->hdmi_irq = irq;
+	hdmirx_dev->hdmi_fiq = true;
+
+	ret = devm_add_action_or_reset(dev, hdmirx_release_fiq, hdmirx_dev);
+	if (ret)
+		return ret;
+
+	/* Keep the secure FIQ and its forwarded IRQ on the boot CPU. */
+	ret = hdmirx_fiq_control(RK_SIP_FIQ_SET_AFFINITY, cpu_logical_map(0));
+	if (ret)
+		return dev_err_probe(dev, -EIO, "failed to route HDMIRX FIQ: %d\n", ret);
+#endif
+	return 0;
+}
 
 static const struct v4l2_dv_timings cea640x480 = V4L2_DV_BT_CEA_640X480P59_94;
 
@@ -584,7 +663,7 @@ static void hdmirx_interrupts_setup(struct snps_hdmirx_dev *hdmirx_dev, bool en)
 	v4l2_dbg(1, debug, &hdmirx_dev->v4l2_dev, "%s: %sable\n",
 		 __func__, en ? "en" : "dis");
 
-	disable_irq(hdmirx_dev->hdmi_irq);
+	hdmirx_disable_hdmi_irq(hdmirx_dev);
 
 	/* Note: In DVI mode, it needs to be written twice to take effect. */
 	hdmirx_clear_interrupt(hdmirx_dev, MAINUNIT_0_INT_CLEAR, 0xffffffff);
@@ -612,7 +691,7 @@ static void hdmirx_interrupts_setup(struct snps_hdmirx_dev *hdmirx_dev, bool en)
 		hdmirx_writel(hdmirx_dev, AVPUNIT_0_INT_MASK_N, 0);
 	}
 
-	enable_irq(hdmirx_dev->hdmi_irq);
+	hdmirx_enable_hdmi_irq(hdmirx_dev);
 }
 
 static void hdmirx_plugout(struct snps_hdmirx_dev *hdmirx_dev)
@@ -1951,6 +2030,9 @@ static irqreturn_t hdmirx_hdmi_irq_handler(int irq, void *dev_id)
 	}
 
 	v4l2_dbg(2, debug, v4l2_dev, "%s: en_fiq", __func__);
+	/* Rockchip TF-A masks the secure interrupt until Linux acknowledges it. */
+	if (hdmirx_dev->hdmi_fiq)
+		hdmirx_fiq_control(RK_SIP_FIQ_ENABLE, 0);
 
 	return handled ? IRQ_HANDLED : IRQ_NONE;
 }
@@ -2362,7 +2444,7 @@ static int hdmirx_detect_broken_interrupt(struct snps_hdmirx_dev *hdmirx_dev)
 	int ret;
 	u32 val;
 
-	enable_irq(hdmirx_dev->hdmi_irq);
+	hdmirx_enable_hdmi_irq(hdmirx_dev);
 
 	hdmirx_writel(hdmirx_dev, PHYCREG_CONFIG0, 0x3);
 
@@ -2370,7 +2452,7 @@ static int hdmirx_detect_broken_interrupt(struct snps_hdmirx_dev *hdmirx_dev)
 				       HDMIPCS_DIG_CTRL_PATH_MAIN_FSM_FSM_CONFIG,
 				       &val);
 
-	disable_irq(hdmirx_dev->hdmi_irq);
+	hdmirx_disable_hdmi_irq(hdmirx_dev);
 
 	return ret;
 }
@@ -2385,15 +2467,10 @@ static int hdmirx_init(struct snps_hdmirx_dev *hdmirx_dev)
 		     (HDMIRX_SDAIN_MSK | HDMIRX_SCLIN_MSK) |
 		     ((HDMIRX_SDAIN_MSK | HDMIRX_SCLIN_MSK) << 16));
 
-	/*
-	 * RK3588 downstream version of TF-A remaps HDMIRX interrupt and
-	 * requires use of a vendor-specific FW API that we don't support
-	 * in this driver.
-	 */
 	ret = hdmirx_detect_broken_interrupt(hdmirx_dev);
 	if (ret)
 		dev_err_probe(hdmirx_dev->dev, ret,
-			      "interrupt not functioning, open-source TF-A is required by this driver\n");
+			      "HDMIRX interrupt not functioning, check TF-A compatibility\n");
 
 	/*
 	 * Some interrupts are enabled by default, so we disable
@@ -2504,7 +2581,7 @@ static void hdmirx_disable_irq(struct device *dev)
 
 	disable_irq(hdmirx_dev->det_irq);
 	disable_irq(hdmirx_dev->dma_irq);
-	disable_irq(hdmirx_dev->hdmi_irq);
+	hdmirx_disable_hdmi_irq(hdmirx_dev);
 
 	cancel_delayed_work_sync(&hdmirx_dev->delayed_work_hotplug);
 	cancel_delayed_work_sync(&hdmirx_dev->delayed_work_res_change);
@@ -2514,7 +2591,7 @@ static void hdmirx_enable_irq(struct device *dev)
 {
 	struct snps_hdmirx_dev *hdmirx_dev = dev_get_drvdata(dev);
 
-	enable_irq(hdmirx_dev->hdmi_irq);
+	hdmirx_enable_hdmi_irq(hdmirx_dev);
 	enable_irq(hdmirx_dev->dma_irq);
 	enable_irq(hdmirx_dev->det_irq);
 
@@ -2565,7 +2642,7 @@ static int hdmirx_setup_irq(struct snps_hdmirx_dev *hdmirx_dev,
 			    struct platform_device *pdev)
 {
 	struct device *dev = hdmirx_dev->dev;
-	int ret, irq;
+	int ret, irq, fiq_irq;
 
 	irq = platform_get_irq_byname(pdev, "hdmi");
 	if (irq < 0) {
@@ -2573,14 +2650,31 @@ static int hdmirx_setup_irq(struct snps_hdmirx_dev *hdmirx_dev,
 		return irq;
 	}
 
+	hdmirx_dev->hdmi_irq = irq;
+	fiq_irq = platform_get_irq_byname_optional(pdev, "hdmi-fiq");
+	if (fiq_irq == -EPROBE_DEFER)
+		return fiq_irq;
+	if (fiq_irq > 0) {
+		ret = hdmirx_setup_fiq(hdmirx_dev, fiq_irq);
+		if (ret)
+			return ret;
+	}
+
+	irq = hdmirx_dev->hdmi_irq;
 	irq_set_status_flags(irq, IRQ_NOAUTOEN);
 
-	hdmirx_dev->hdmi_irq = irq;
 	ret = devm_request_irq(dev, irq, hdmirx_hdmi_irq_handler, 0,
 			       "rk_hdmirx-hdmi", hdmirx_dev);
 	if (ret) {
 		dev_err_probe(dev, ret, "failed to request hdmi irq\n");
 		return ret;
+	}
+
+	if (hdmirx_dev->hdmi_fiq) {
+		ret = irq_set_affinity_and_hint(irq, cpumask_of(0));
+		if (ret)
+			return dev_err_probe(dev, ret, "failed to set HDMIRX IRQ affinity\n");
+		dev_info(dev, "using Rockchip TF-A HDMIRX FIQ forwarding\n");
 	}
 
 	irq = platform_get_irq_byname(pdev, "dma");
@@ -2701,7 +2795,9 @@ static int hdmirx_probe(struct platform_device *pdev)
 	hdmirx_dev->cur_fmt_fourcc = V4L2_PIX_FMT_BGR24;
 	hdmirx_dev->timings = cea640x480;
 
-	hdmirx_enable(dev);
+	ret = hdmirx_enable(dev);
+	if (ret)
+		return ret;
 
 	ret = hdmirx_init(hdmirx_dev);
 	if (ret)
