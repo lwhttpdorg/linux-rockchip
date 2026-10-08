@@ -6536,7 +6536,7 @@ CONFIG_ARM_SMMU_V3=y
 # CONFIG_IOMMUFD is not set
 CONFIG_ROCKCHIP_IOMMU=y
 # CONFIG_VIRTIO_IOMMU is not set
-# CONFIG_VSI_IOMMU is not set
+CONFIG_VSI_IOMMU=y
 
 #
 # Remoteproc drivers
