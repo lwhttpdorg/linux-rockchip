@@ -220,7 +220,7 @@ static int hdmirx_setup_fiq(struct snps_hdmirx_dev *hdmirx_dev, int irq)
 
 	/* An unsupported SiP call leaves the upstream IRQ path unchanged. */
 	ret = hdmirx_fiq_control(RK_SIP_FIQ_DISABLE, 0);
-	if (ret == ARM_SMCCC_RET_NOT_SUPPORTED || ret == -2 || ret == -EOPNOTSUPP)
+	if (ret == SMCCC_RET_NOT_SUPPORTED || ret == -2 || ret == -EOPNOTSUPP)
 		return 0;
 	if (ret)
 		return dev_err_probe(dev, -EIO, "failed to disable HDMIRX FIQ: %d\n", ret);
