@@ -2269,9 +2269,6 @@ err_disable_runtime_pm:
 	pm_runtime_dont_use_autosuspend(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 
-	if (core->sram_pool)
-		gen_pool_destroy(core->sram_pool);
-
 err_remove_core:
 	platform_set_drvdata(pdev, NULL);
 	rkvdec->core_count--;
